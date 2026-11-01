@@ -450,8 +450,15 @@ class LibMPV extends BasePlayer {
   Future<void> pause() async {
     _musicPaused = true;
     setState(lastState.update(playing: false));
+    // The native iOS PiP player shares this process-wide audio session.
+    // Wait for MPV's deactivation before AVPlayer tries to activate it,
+    // otherwise the async deactivation may turn off PiP audio afterward.
     if (!iosNativePipActive) {
-      unawaited(_audioSession?.setActive(false));
+      try {
+        await _audioSession?.setActive(false);
+      } catch (error) {
+        debugPrint('MPV audio session deactivation failed: $error');
+      }
     }
     _startPlaybackFade(false);
   }
