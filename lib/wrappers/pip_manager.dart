@@ -5,6 +5,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:pip/pip.dart';
 
+// MPV must not deactivate the app-wide audio session while native iOS PiP
+// is playing. The Flutter audio session is shared with AVPlayer.
+bool iosNativePipActive = false;
+
 bool get pipPlatformSupported {
   if (kIsWeb) return false;
   return Platform.isAndroid || Platform.isIOS;
@@ -147,9 +151,11 @@ class _IosPipClient implements PipClient {
       switch (data['status']) {
         case 'started':
           _hasStarted = true;
+          iosNativePipActive = true;
           _observer?.call(true);
           break;
         case 'stopped':
+          iosNativePipActive = false;
           _observer?.call(false);
           if (_hasStarted) {
             _hasStarted = false;
@@ -160,6 +166,7 @@ class _IosPipClient implements PipClient {
           }
           break;
         case 'failed':
+          iosNativePipActive = false;
           _observer?.call(false);
           break;
       }
@@ -168,6 +175,7 @@ class _IosPipClient implements PipClient {
 
   @override
   Future<void> dispose() async {
+    iosNativePipActive = false;
     _channel.setMethodCallHandler(null);
     await _channel.invokeMethod<void>('dispose');
   }
