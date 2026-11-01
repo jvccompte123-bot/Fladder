@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -18,67 +22,95 @@ class PipLifecycleController extends ConsumerStatefulWidget {
 }
 
 class _PipLifecycleControllerState extends ConsumerState<PipLifecycleController> {
+  StreamSubscription<IosPipRestoreEvent>? _iosRestoreSubscription;
+  Future<void> _configurationQueue = Future<void>.value();
+
+  bool get _onIOS => !kIsWeb && Platform.isIOS;
+  bool get _onAndroid => !kIsWeb && Platform.isAndroid;
+
   @override
   void initState() {
     super.initState();
-    if (pipPlatformSupported) {
+    if (_onIOS) {
+      // Native AVPlayer owns the PiP frames on iOS. Do not configure the
+      // generic PiP plugin, which would show black frames even without video.
+      _iosRestoreSubscription = ref.read(pipManagerProvider).iosRestoreEvents.listen(_restoreIOSPlayback);
+    } else if (_onAndroid) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _applyCurrent());
     }
   }
 
-  void _applyCurrent() {
+  Future<void> _restoreIOSPlayback(IosPipRestoreEvent restored) async {
     if (!mounted) return;
-    final state = ref.read(mediaPlaybackProvider).state;
-    final autoEnter = ref.read(videoPlayerSettingsProvider).enablePictureInPicture;
-    final isAudioPlayback = ref.read(playBackModel)?.isAudioPlayback ?? false;
-    _apply(state, autoEnter, isAudioPlayback: isAudioPlayback);
+    // Return to the MPV player at the position reached by AVPlayer in PiP.
+    final player = ref.read(videoPlayerProvider);
+    await player.seek(restored.position);
+    if (!mounted) return;
+    // Closing PiP in the background should not restart media invisibly.
+    if (restored.wasPlaying && WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+      await player.play();
+    }
   }
 
-  void _apply(
-    VideoPlayerState state,
-    bool autoEnter, {
-    required bool isAudioPlayback,
-  }) {
-    final manager = ref.read(pipManagerProvider);
-    final autoEnterAllowed = autoEnter && !isAudioPlayback;
-    if (state == VideoPlayerState.fullScreen || state == VideoPlayerState.minimized) {
-      manager.enable(aspectWidth: 16.0, aspectHeight: 9.0, autoEnter: autoEnterAllowed);
-    } else {
-      manager.disable();
-    }
+  void _applyCurrent() {
+    if (!mounted || !_onAndroid) return;
+
+    // Serialize configuration changes. Async native setup calls used to race
+    // when playback ended or the auto-PiP switch was disabled.
+    _configurationQueue = _configurationQueue.then((_) async {
+      if (!mounted) return;
+
+      final playback = ref.read(mediaPlaybackProvider);
+      final model = ref.read(playBackModel);
+      final enabled = ref.read(videoPlayerSettingsProvider).enablePictureInPicture;
+      final isRealVideo = model?.media != null &&
+          model?.isAudioPlayback == false &&
+          playback.state != VideoPlayerState.disposed &&
+          playback.playing &&
+          !playback.completed;
+
+      final manager = ref.read(pipManagerProvider);
+      if (isRealVideo) {
+        await manager.enable(aspectWidth: 16.0, aspectHeight: 9.0, autoEnter: enabled);
+      } else {
+        await manager.disable();
+      }
+    }).catchError((Object error, StackTrace stackTrace) {
+      debugPrint('PiP configuration error: $error');
+    });
+  }
+
+  @override
+  void dispose() {
+    _iosRestoreSubscription?.cancel();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!pipPlatformSupported) {
+    if (!pipPlatformSupported || _onIOS) {
       return widget.child;
     }
+
     ref.listen<VideoPlayerState>(
       mediaPlaybackProvider.select((v) => v.state),
-      (previous, next) {
-        if (previous == next) return;
-        final autoEnter = ref.read(videoPlayerSettingsProvider).enablePictureInPicture;
-        final isAudioPlayback = ref.read(playBackModel)?.isAudioPlayback ?? false;
-        _apply(next, autoEnter, isAudioPlayback: isAudioPlayback);
-      },
+      (_, __) => _applyCurrent(),
+    );
+    ref.listen<bool>(
+      mediaPlaybackProvider.select((v) => v.playing),
+      (_, __) => _applyCurrent(),
+    );
+    ref.listen<bool>(
+      mediaPlaybackProvider.select((v) => v.completed),
+      (_, __) => _applyCurrent(),
     );
     ref.listen<bool>(
       videoPlayerSettingsProvider.select((v) => v.enablePictureInPicture),
-      (previous, next) {
-        if (previous == next) return;
-        final state = ref.read(mediaPlaybackProvider).state;
-        final isAudioPlayback = ref.read(playBackModel)?.isAudioPlayback ?? false;
-        _apply(state, next, isAudioPlayback: isAudioPlayback);
-      },
+      (_, __) => _applyCurrent(),
     );
-    ref.listen<bool>(
-      playBackModel.select((value) => value?.isAudioPlayback ?? false),
-      (previous, next) {
-        if (previous == next) return;
-        final state = ref.read(mediaPlaybackProvider).state;
-        final autoEnter = ref.read(videoPlayerSettingsProvider).enablePictureInPicture;
-        _apply(state, autoEnter, isAudioPlayback: next);
-      },
+    ref.listen(
+      playBackModel,
+      (_, __) => _applyCurrent(),
     );
 
     final inPip = ref.watch(pipStateProvider).asData?.value ?? false;
