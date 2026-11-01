@@ -289,8 +289,10 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
     timeout = nil
     let result = pendingStart
     pendingStart = nil
-    // AVKit renders the PiP window from the player, not this inline layer.
-    playerLayer?.opacity = 0
+    // Keep the source layer attached and visible to AVKit even
+    // when Flutter navigates or iOS moves this app to the background.
+    // Lower the layer behind Flutter instead of making it fully transparent.
+    playerLayer?.zPosition = -1000
     emit("started")
     result?(true)
   }

@@ -447,6 +447,9 @@ class _DesktopControlsState extends ConsumerState<DesktopControls> {
                                      model?.isAudioPlayback == false &&
                                      playback.playing) {
                                    await player.pause();
+                                   // Let the MPV fade and the audio session settle
+                                   // before AVPlayer starts its background session.
+                                   await Future<void>.delayed(const Duration(milliseconds: 225));
                                    try {
                                      ok = await manager.enter(mediaUrl: url, position: playback.position);
                                    } catch (_) {
