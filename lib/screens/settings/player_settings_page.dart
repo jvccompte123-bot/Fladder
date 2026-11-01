@@ -80,7 +80,8 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
                   ),
                 ],
               ),
-            if (pipPlatformSupported)
+            // Automatic PiP is Android-only until native iOS auto-enter is available.
+            if (pipPlatformSupported && defaultTargetPlatform != TargetPlatform.iOS)
               SettingsListTile(
                 label: Text(context.localized.pictureInPictureAutoTitle),
                 subLabel: Text(context.localized.pictureInPictureSubtitle),
