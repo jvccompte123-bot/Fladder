@@ -21,6 +21,7 @@ import 'package:fladder/models/settings/video_player_settings.dart';
 import 'package:fladder/providers/settings/subtitle_settings_provider.dart';
 import 'package:fladder/screens/video_player/video_player.dart' as video_screen;
 import 'package:fladder/util/subtitle_position_calculator.dart';
+import 'package:fladder/wrappers/pip_manager.dart';
 import 'package:fladder/wrappers/players/base_player.dart';
 import 'package:fladder/wrappers/players/player_states.dart';
 
@@ -120,7 +121,9 @@ class LibMPV extends BasePlayer {
 
   @override
   Future<void> dispose() async {
-    unawaited(_audioSession?.setActive(false));
+    if (!iosNativePipActive) {
+      unawaited(_audioSession?.setActive(false));
+    }
     _fadeTimer?.cancel();
     _fadeTimer = null;
     _crossfadeGeneration++;
@@ -447,7 +450,9 @@ class LibMPV extends BasePlayer {
   Future<void> pause() async {
     _musicPaused = true;
     setState(lastState.update(playing: false));
-    unawaited(_audioSession?.setActive(false));
+    if (!iosNativePipActive) {
+      unawaited(_audioSession?.setActive(false));
+    }
     _startPlaybackFade(false);
   }
 
@@ -540,7 +545,9 @@ class LibMPV extends BasePlayer {
 
   @override
   Future<void> stop() async {
-    unawaited(_audioSession?.setActive(false));
+    if (!iosNativePipActive) {
+      unawaited(_audioSession?.setActive(false));
+    }
     return _player?.stop();
   }
 
