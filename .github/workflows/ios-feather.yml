@@ -3,6 +3,9 @@
 name: iOS - IPA pour Feather
 
 on:
+  push:
+    branches:
+      - fix/ios-pip-playback
   workflow_dispatch:
 
 permissions:
