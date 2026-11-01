@@ -21,8 +21,9 @@ class PipLifecycleController extends ConsumerStatefulWidget {
   ConsumerState<PipLifecycleController> createState() => _PipLifecycleControllerState();
 }
 
-class _PipLifecycleControllerState extends ConsumerState<PipLifecycleController> {
+class _PipLifecycleControllerState extends ConsumerState<PipLifecycleController> with WidgetsBindingObserver {
   StreamSubscription<IosPipRestoreEvent>? _iosRestoreSubscription;
+  IosPipRestoreEvent? _pendingIOSRestore;
   Future<void> _configurationQueue = Future<void>.value();
 
   bool get _onIOS => !kIsWeb && Platform.isIOS;
@@ -32,6 +33,7 @@ class _PipLifecycleControllerState extends ConsumerState<PipLifecycleController>
   void initState() {
     super.initState();
     if (_onIOS) {
+      WidgetsBinding.instance.addObserver(this);
       // Native AVPlayer owns the PiP frames on iOS. Do not configure the
       // generic PiP plugin, which would show black frames even without video.
       _iosRestoreSubscription = ref.read(pipManagerProvider).iosRestoreEvents.listen(_restoreIOSPlayback);
@@ -40,14 +42,27 @@ class _PipLifecycleControllerState extends ConsumerState<PipLifecycleController>
     }
   }
 
-  Future<void> _restoreIOSPlayback(IosPipRestoreEvent restored) async {
-    if (!mounted) return;
-    // Return to the MPV player at the position reached by AVPlayer in PiP.
+  void _restoreIOSPlayback(IosPipRestoreEvent restored) {
+    _pendingIOSRestore = restored;
+    _applyIOSRestoreIfResumed();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _applyIOSRestoreIfResumed();
+    }
+  }
+
+  Future<void> _applyIOSRestoreIfResumed() async {
+    if (!mounted || WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) return;
+    final restored = _pendingIOSRestore;
+    if (restored == null) return;
+    _pendingIOSRestore = null;
+    // Keep the MPV player paused if the PiP user paused/closed playback.
     final player = ref.read(videoPlayerProvider);
     await player.seek(restored.position);
-    if (!mounted) return;
-    // Closing PiP in the background should not restart media invisibly.
-    if (restored.wasPlaying && WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+    if (mounted && restored.wasPlaying) {
       await player.play();
     }
   }
@@ -83,6 +98,7 @@ class _PipLifecycleControllerState extends ConsumerState<PipLifecycleController>
   @override
   void dispose() {
     _iosRestoreSubscription?.cancel();
+    if (_onIOS) WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
