@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -431,13 +432,37 @@ class _DesktopControlsState extends ConsumerState<DesktopControls> {
                           IconButton(
                             tooltip: context.localized.pictureInPictureTitle,
                             onPressed: () async {
-                              final ok = await ref.read(pipManagerProvider).enter();
-                              if (!ok && context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(context.localized.pictureInPictureNotSupported)),
-                                );
-                              }
-                            },
+                               final manager = ref.read(pipManagerProvider);
+                               final isIOS = !kIsWeb && Platform.isIOS;
+                               final playback = ref.read(mediaPlaybackProvider);
+                               final model = ref.read(playBackModel);
+                               final player = ref.read(videoPlayerProvider);
+                               bool ok = false;
+                               if (isIOS) {
+                                 // The iOS native AVPlayer must own the PiP video.
+                                 // Pause MPV first to avoid two audio streams;
+                                 // restore it if native PiP cannot begin.
+                                 final url = model?.media?.url;
+                                 if (url != null && url.isNotEmpty &&
+                                     model?.isAudioPlayback == false &&
+                                     playback.playing) {
+                                   await player.pause();
+                                   try {
+                                     ok = await manager.enter(mediaUrl: url, position: playback.position);
+                                   } catch (_) {
+                                     ok = false;
+                                   }
+                                   if (!ok) await player.play();
+                                 }
+                               } else {
+                                 ok = await manager.enter();
+                               }
+                               if (!ok && context.mounted) {
+                                 ScaffoldMessenger.of(context).showSnackBar(
+                                   SnackBar(content: Text(context.localized.pictureInPictureNotSupported)),
+                                 );
+                               }
+                             },
                             icon: const Icon(IconsaxPlusLinear.screenmirroring),
                           ),
                         if (AdaptiveLayout.layoutOf(context) == ViewSize.tablet) ...[
