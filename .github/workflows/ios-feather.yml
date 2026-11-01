@@ -1,0 +1,66 @@
+# Compilation iOS personnelle pour installation avec Feather.
+# Ne contient aucun certificat Apple, mot de passe ou secret de signature.
+name: iOS - IPA pour Feather
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    name: Construire l'IPA iOS non signe
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Recuperer le code
+        uses: actions/checkout@v4
+
+      - name: Lire la version Flutter du projet
+        id: flutter-version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(jq -r '.flutter' .fvmrc)"
+          test -n "$VERSION"
+          test "$VERSION" != "null"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Installer Flutter
+        uses: subosito/flutter-action@v2.19.0
+        with:
+          channel: stable
+          flutter-version: ${{ steps.flutter-version.outputs.version }}
+          cache: true
+
+      - name: Installer les dependances Flutter
+        run: flutter pub get
+
+      - name: Compiler l'application iPhone sans signature
+        run: flutter build ios --release --no-codesign --flavor production --build-number=${{ github.run_number }}
+
+      - name: Creer un fichier IPA pour Feather
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="build/ios/iphoneos/Runner.app"
+          test -d "$APP"
+          mkdir -p dist/Payload
+          ditto "$APP" dist/Payload/Runner.app
+          (
+            cd dist
+            zip -qry Fladder-Feather-unsigned.ipa Payload
+          )
+          test -s dist/Fladder-Feather-unsigned.ipa
+          echo "IPA non signe : dist/Fladder-Feather-unsigned.ipa"
+
+      - name: Publier le fichier IPA a telecharger
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fladder-Feather-iOS
+          path: dist/Fladder-Feather-unsigned.ipa
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
