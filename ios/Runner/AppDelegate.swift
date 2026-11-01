@@ -1,4 +1,5 @@
 import UIKit
+import AVFoundation
 import AVKit
 import Flutter
 import workmanager_apple
@@ -59,6 +60,8 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
   private var playerLayer: AVPlayerLayer?
   private var pictureController: AVPictureInPictureController?
   private var statusObservation: NSKeyValueObservation?
+  private var presentationSizeObservation: NSKeyValueObservation?
+  private var backgroundObserver: NSObjectProtocol?
   private var possibleObservation: NSKeyValueObservation?
   private var timeout: DispatchWorkItem?
   private var pendingStart: FlutterResult?
@@ -69,6 +72,15 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
     self.sourceView = sourceView
     channel = FlutterMethodChannel(name: "fladder/ios_pip", binaryMessenger: messenger)
     super.init()
+    backgroundObserver = NotificationCenter.default.addObserver(
+      forName: UIApplication.didEnterBackgroundNotification,
+      object: nil, queue: .main
+    ) { [weak self] _ in
+      guard let self = self, self.sessionStarted else { return }
+      // Other Flutter audio plugins can change the shared audio session.
+      // Reassert background playback while native PiP is already running.
+      _ = self.activatePlaybackAudio()
+    }
     channel.setMethodCallHandler { [weak self] call, result in
       guard let self = self else {
         result(false)
@@ -91,6 +103,43 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
     }
   }
 
+  deinit {
+    if let backgroundObserver = backgroundObserver {
+      NotificationCenter.default.removeObserver(backgroundObserver)
+    }
+  }
+
+  private func activatePlaybackAudio() -> Bool {
+    do {
+      let session = AVAudioSession.sharedInstance()
+      try session.setCategory(.playback, mode: .moviePlayback)
+      try session.setActive(true)
+      return true
+    } catch {
+      NSLog("Fladder iOS PiP: failed to activate playback audio session: %@", String(describing: error))
+      return false
+    }
+  }
+
+  private func updateVideoGeometry(for item: AVPlayerItem) {
+    guard let view = sourceView, let layer = playerLayer else { return }
+
+    // The encoded media may be 2.39:1, 4:3, portrait, etc.
+    // Match the video instead of using the phone screen as a video frame.
+    let size = item.presentationSize
+    let valid = size.width > 0 && size.height > 0 &&
+        size.width.isFinite && size.height.isFinite
+    let aspect = valid ? size.width / size.height : 16.0 / 9.0
+    let width = max(1.0, view.bounds.width)
+    let height = width / max(0.1, aspect)
+    let originY = (view.bounds.height - height) / 2.0
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    layer.frame = CGRect(x: 0, y: originY, width: width, height: height)
+    layer.videoGravity = .resizeAspect
+    CATransaction.commit()
+  }
+
   private func start(_ rawArguments: Any?, result: @escaping FlutterResult) {
     guard pendingStart == nil, !sessionStarted,
           let arguments = rawArguments as? [String: Any],
@@ -105,13 +154,24 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
 
     cleanup()
 
+    // This must happen before AVPictureInPictureController is created.
+    // In particular, the Flutter/MPV pause command may have deactivated
+    // the shared iOS audio session just before we received this request.
+    guard activatePlaybackAudio() else {
+      result(false)
+      return
+    }
+
     let item = AVPlayerItem(url: url)
     let videoPlayer = AVPlayer(playerItem: item)
     videoPlayer.automaticallyWaitsToMinimizeStalling = true
 
     // PiP needs an actual player layer attached to the visible app window.
     let layer = AVPlayerLayer(player: videoPlayer)
-    layer.frame = view.bounds
+    layer.frame = CGRect(
+      x: 0, y: (view.bounds.height - view.bounds.width * 9.0 / 16.0) / 2.0,
+      width: view.bounds.width, height: view.bounds.width * 9.0 / 16.0
+    )
     layer.videoGravity = .resizeAspect
     view.layer.addSublayer(layer)
 
@@ -126,6 +186,7 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
     player = videoPlayer
     playerLayer = layer
     pictureController = pip
+    updateVideoGeometry(for: item)
     pendingStart = result
     didRequestStart = false
 
@@ -135,9 +196,13 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
         if current.status == .failed {
           self.failStart()
         } else if current.status == .readyToPlay {
+          self.updateVideoGeometry(for: current)
           self.tryStart()
         }
       }
+    }
+    presentationSizeObservation = item.observe(\.presentationSize, options: [.initial, .new]) { [weak self] current, _ in
+      DispatchQueue.main.async { self?.updateVideoGeometry(for: current) }
     }
     possibleObservation = pip.observe(\.isPictureInPicturePossible, options: [.initial, .new]) { [weak self] _, _ in
       DispatchQueue.main.async { self?.tryStart() }
@@ -166,6 +231,12 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
     guard pendingStart != nil, !didRequestStart,
           pictureController?.isPictureInPicturePossible == true,
           player?.currentItem?.status == .readyToPlay else { return }
+    // The MPV player pauses its shared audio session on transfer.
+    // Make sure native AVPlayer owns an active session before requesting PiP.
+    guard activatePlaybackAudio() else {
+      failStart()
+      return
+    }
     didRequestStart = true
     pictureController?.startPictureInPicture()
   }
@@ -193,6 +264,7 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
     timeout = nil
     possibleObservation = nil
     statusObservation = nil
+    presentationSizeObservation = nil
     pictureController?.delegate = nil
     pictureController = nil
     player?.pause()
@@ -212,6 +284,7 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
 
   func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
     sessionStarted = true
+    _ = activatePlaybackAudio()
     timeout?.cancel()
     timeout = nil
     let result = pendingStart
