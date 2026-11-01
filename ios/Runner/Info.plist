@@ -48,6 +48,13 @@
 		<key>UIApplicationSupportsIndirectInputEvents</key>
 		<true/>
 
+		<!-- Allow AVPlayer to load video from a local Jellyfin NAS via HTTP. -->
+		<key>NSAppTransportSecurity</key>
+		<dict>
+			<key>NSAllowsLocalNetworking</key>
+			<true/>
+		</dict>
+
 		<key>UIBackgroundModes</key>
 		<array>
 			<string>audio</string>
