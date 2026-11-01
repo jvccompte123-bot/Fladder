@@ -428,7 +428,7 @@ class _DesktopControlsState extends ConsumerState<DesktopControls> {
                         IconButton(
                             onPressed: () => showVideoPlayerOptions(context, () => minimizePlayer(context)),
                             icon: const Icon(IconsaxPlusLinear.more)),
-                        if (pipPlatformSupported && MediaQuery.orientationOf(context) == Orientation.landscape)
+                        if (pipPlatformSupported && ((!kIsWeb && Platform.isIOS) || MediaQuery.orientationOf(context) == Orientation.landscape))
                           IconButton(
                             tooltip: context.localized.pictureInPictureTitle,
                             onPressed: () async {
