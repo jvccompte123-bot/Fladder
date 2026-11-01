@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:pip/pip.dart';
 
 bool get pipPlatformSupported {
@@ -86,14 +87,106 @@ class _RealPipClient implements PipClient {
   }
 }
 
-// Only file that imports `package:pip` — everything else depends on PipManager.
+/// Position and playback state when iOS gives control back to Fladder.
+class IosPipRestoreEvent {
+  const IosPipRestoreEvent(this.position, this.wasPlaying);
+
+  final Duration position;
+  final bool wasPlaying;
+}
+
+/// Unlike the generic PiP plugin, this implementation supplies real AVPlayer
+/// video frames to AVKit. The native player only starts on explicit user action.
+class _IosPipClient implements PipClient {
+  static const _channel = MethodChannel('fladder/ios_pip');
+
+  void Function(bool)? _observer;
+  void Function(IosPipRestoreEvent)? onRestore;
+  bool _hasStarted = false;
+
+  @override
+  Future<bool> isSupported() async => await _channel.invokeMethod<bool>('isSupported') ?? false;
+
+  @override
+  Future<bool> isAutoEnterSupported() async => false;
+
+  @override
+  Future<void> setup({
+    required double aspectWidth,
+    required double aspectHeight,
+    required bool autoEnterEnabled,
+  }) async {
+    // iOS: never set up auto-enter without a valid video source.
+  }
+
+  @override
+  Future<void> disableAutoEnter() async {}
+
+  @override
+  Future<bool> start() async => false;
+
+  Future<bool> startWithMedia(String url, Duration position) async {
+    final started = await _channel.invokeMethod<bool>('start', {
+          'url': url,
+          'positionMs': position.inMilliseconds,
+        }) ??
+        false;
+    // If setup fails, the normal MPV player can resume immediately.
+    return started;
+  }
+
+  @override
+  Future<void> stop() => _channel.invokeMethod<void>('stop');
+
+  @override
+  void registerStateChangedObserver(void Function(bool isInPip) observer) {
+    _observer = observer;
+    _channel.setMethodCallHandler((call) async {
+      if (call.method != 'state') return;
+      final data = Map<String, dynamic>.from(call.arguments as Map);
+      switch (data['status']) {
+        case 'started':
+          _hasStarted = true;
+          _observer?.call(true);
+          break;
+        case 'stopped':
+          _observer?.call(false);
+          if (_hasStarted) {
+            _hasStarted = false;
+            onRestore?.call(IosPipRestoreEvent(
+              Duration(milliseconds: (data['positionMs'] as num?)?.toInt() ?? 0),
+              data['playing'] == true,
+            ));
+          }
+          break;
+        case 'failed':
+          _observer?.call(false);
+          break;
+      }
+    });
+  }
+
+  @override
+  Future<void> dispose() async {
+    _channel.setMethodCallHandler(null);
+    await _channel.invokeMethod<void>('dispose');
+  }
+}
+
+// Only Android uses package:pip; iOS uses a real native AVPlayer/AVKit bridge.
 class PipManager {
-  PipManager({PipClient? client}) : _client = client ?? _RealPipClient() {
+  PipManager({PipClient? client}) : _client = client ?? (!kIsWeb && Platform.isIOS ? _IosPipClient() : _RealPipClient()) {
     _client.registerStateChangedObserver(_onStateChanged);
+    if (_client is _IosPipClient) {
+      (_client as _IosPipClient).onRestore = _restoreController.add;
+    }
   }
 
   final PipClient _client;
   final StreamController<bool> _stateController = StreamController<bool>.broadcast();
+  final StreamController<IosPipRestoreEvent> _restoreController = StreamController<IosPipRestoreEvent>.broadcast();
+
+  Stream<IosPipRestoreEvent> get iosRestoreEvents => _restoreController.stream;
 
   bool _supportCached = false;
   bool _supportChecked = false;
@@ -123,14 +216,19 @@ class PipManager {
     await _client.stop();
   }
 
-  Future<bool> enter() async {
+  Future<bool> enter({String? mediaUrl, Duration position = Duration.zero}) async {
     if (!await _ensureSupported()) return false;
+    if (_client is _IosPipClient) {
+      if (mediaUrl == null || mediaUrl.isEmpty) return false;
+      return (_client as _IosPipClient).startWithMedia(mediaUrl, position);
+    }
     return _client.start();
   }
 
   Future<void> dispose() async {
     await _client.dispose();
     await _stateController.close();
+    await _restoreController.close();
   }
 
   Future<bool> _ensureSupported() async {
