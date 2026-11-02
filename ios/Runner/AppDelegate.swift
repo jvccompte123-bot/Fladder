@@ -63,6 +63,8 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
   private var presentationSizeObservation: NSKeyValueObservation?
   private var backgroundObserver: NSObjectProtocol?
   private var possibleObservation: NSKeyValueObservation?
+  private var layerObservation: NSKeyValueObservation?
+  private var seekCompleted = false
   private var timeout: DispatchWorkItem?
   private var pendingStart: FlutterResult?
   private var didRequestStart = false
@@ -130,12 +132,12 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
     let valid = size.width > 0 && size.height > 0 &&
         size.width.isFinite && size.height.isFinite
     let aspect = valid ? size.width / size.height : 16.0 / 9.0
-    let width = max(1.0, view.bounds.width)
+    let width = max(1.0, min(view.bounds.width, view.bounds.height * aspect))
     let height = width / max(0.1, aspect)
     let originY = (view.bounds.height - height) / 2.0
     CATransaction.begin()
     CATransaction.setDisableActions(true)
-    layer.frame = CGRect(x: 0, y: originY, width: width, height: height)
+    layer.frame = CGRect(x: (view.bounds.width - width) / 2, y: originY, width: width, height: height)
     layer.videoGravity = .resizeAspect
     CATransaction.commit()
   }
@@ -165,6 +167,7 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
     let item = AVPlayerItem(url: url)
     let videoPlayer = AVPlayer(playerItem: item)
     videoPlayer.automaticallyWaitsToMinimizeStalling = true
+    videoPlayer.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
 
     // PiP needs an actual player layer attached to the visible app window.
     let layer = AVPlayerLayer(player: videoPlayer)
@@ -208,11 +211,17 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
       DispatchQueue.main.async { self?.tryStart() }
     }
 
+    layerObservation = layer.observe(\.isReadyForDisplay, options: [.initial, .new]) { [weak self] _, _ in
+      DispatchQueue.main.async { self?.tryStart() }
+    }
+
     let positionMs = max(0, (arguments["positionMs"] as? NSNumber)?.int64Value ?? 0)
     let time = CMTime(value: positionMs, timescale: 1000)
-    videoPlayer.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+    videoPlayer.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
       DispatchQueue.main.async {
         guard let self = self, self.pendingStart != nil else { return }
+        guard finished else { self.failStart(); return }
+        self.seekCompleted = true
         self.player?.play()
         self.tryStart()
       }
@@ -228,7 +237,8 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
   }
 
   private func tryStart() {
-    guard pendingStart != nil, !didRequestStart,
+    guard pendingStart != nil, !didRequestStart, seekCompleted,
+          playerLayer?.isReadyForDisplay == true,
           pictureController?.isPictureInPicturePossible == true,
           player?.currentItem?.status == .readyToPlay else { return }
     // The MPV player pauses its shared audio session on transfer.
@@ -262,6 +272,8 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
   private func cleanup() {
     timeout?.cancel()
     timeout = nil
+    layerObservation = nil
+    seekCompleted = false
     possibleObservation = nil
     statusObservation = nil
     presentationSizeObservation = nil
@@ -289,10 +301,9 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
     timeout = nil
     let result = pendingStart
     pendingStart = nil
-    // Keep the source layer attached and visible to AVKit even
-    // when Flutter navigates or iOS moves this app to the background.
-    // Lower the layer behind Flutter instead of making it fully transparent.
-    playerLayer?.zPosition = -1000
+    // AVKit owns presentation while PiP is active. Keep the source layer
+    // attached without changing its visibility or stacking during transition.
+    NSLog("Fladder PiP: didStart")
     emit("started")
     result?(true)
   }
@@ -301,6 +312,8 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
     _ controller: AVPictureInPictureController,
     failedToStartPictureInPictureWithError error: Error
   ) {
+    let failure = error as NSError
+    NSLog("Fladder PiP: start failed domain=%@ code=%ld", failure.domain, failure.code)
     failStart()
   }
 
@@ -317,6 +330,8 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
     _ controller: AVPictureInPictureController,
     restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void
   ) {
-    completionHandler(true)
+    channel.invokeMethod("restoreUI", arguments: nil) { result in
+      completionHandler((result as? Bool) == true)
+    }
   }
 }

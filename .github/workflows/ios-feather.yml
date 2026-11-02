@@ -6,6 +6,7 @@ on:
   push:
     branches:
       - fix/ios-pip-playback
+      - fix/ios-pip-persistent-session
   workflow_dispatch:
 
 permissions:
@@ -40,6 +41,9 @@ jobs:
 
       - name: Installer les dependances Flutter
         run: flutter pub get
+
+      - name: Verifier les transitions PiP
+        run: flutter test --no-pub test/pip_manager_test.dart test/ios_pip_handoff_test.dart
 
       - name: Compiler l'application iPhone sans signature
         run: flutter build ios --release --no-codesign --flavor production --build-number=${{ github.run_number }}

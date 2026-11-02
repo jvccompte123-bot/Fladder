@@ -1,3 +1,4 @@
+import 'package:fladder/wrappers/pip_manager.dart';
 import 'dart:async';
 import 'dart:developer';
 import 'dart:io';
@@ -126,7 +127,7 @@ abstract class BaseAppWrapperState<T extends BaseAppWrapper> extends ConsumerSta
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    final ignoreLifeCycle = ref.read(lockScreenActiveProvider) ||
+    final ignoreLifeCycle = iosNativePipActive || ref.read(lockScreenActiveProvider) ||
         ref.read(userProvider) == null ||
         ref.read(videoPlayerProvider).lastState?.playing == true ||
         nativeActivityStarted;

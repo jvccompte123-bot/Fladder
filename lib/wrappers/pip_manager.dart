@@ -101,12 +101,16 @@ class IosPipRestoreEvent {
 
 /// Unlike the generic PiP plugin, this implementation supplies real AVPlayer
 /// video frames to AVKit. The native player only starts on explicit user action.
-class _IosPipClient implements PipClient {
+class IosPipClient implements PipClient {
   static const _channel = MethodChannel('fladder/ios_pip');
 
   void Function(bool)? _observer;
   void Function(IosPipRestoreEvent)? onRestore;
   bool _hasStarted = false;
+  bool _starting = false;
+  bool suppressRestore = false;
+  Completer<void>? _stopping;
+  Future<bool> Function()? restoreUI;
 
   @override
   Future<bool> isSupported() async => await _channel.invokeMethod<bool>('isSupported') ?? false;
@@ -130,23 +134,35 @@ class _IosPipClient implements PipClient {
   Future<bool> start() async => false;
 
   Future<bool> startWithMedia(String url, Duration position) async {
-    final started = await _channel.invokeMethod<bool>('start', {
-          'url': url,
-          'positionMs': position.inMilliseconds,
-        }) ??
-        false;
-    // If setup fails, the normal MPV player can resume immediately.
-    return started;
+    if (_starting || _hasStarted) return false;
+    _starting = true;
+    try {
+      return await _channel.invokeMethod<bool>('start', {
+        'url': url,
+        'positionMs': position.inMilliseconds,
+      }) ?? false;
+    } finally {
+      _starting = false;
+    }
   }
 
   @override
-  Future<void> stop() => _channel.invokeMethod<void>('stop');
+  Future<void> stop() async {
+    if (!_hasStarted) {
+      await _channel.invokeMethod<void>('stop');
+      return;
+    }
+    final completion = _stopping ??= Completer<void>();
+    await _channel.invokeMethod<void>('stop');
+    await completion.future;
+  }
 
   @override
   void registerStateChangedObserver(void Function(bool isInPip) observer) {
     _observer = observer;
     _channel.setMethodCallHandler((call) async {
-      if (call.method != 'state') return;
+      if (call.method == 'restoreUI') return await restoreUI?.call() ?? false;
+      if (call.method != 'state') return null;
       final data = Map<String, dynamic>.from(call.arguments as Map);
       switch (data['status']) {
         case 'started':
@@ -157,13 +173,16 @@ class _IosPipClient implements PipClient {
         case 'stopped':
           iosNativePipActive = false;
           _observer?.call(false);
-          if (_hasStarted) {
+          _stopping?.complete();
+          _stopping = null;
+          if (_hasStarted && !suppressRestore) {
             _hasStarted = false;
             onRestore?.call(IosPipRestoreEvent(
               Duration(milliseconds: (data['positionMs'] as num?)?.toInt() ?? 0),
               data['playing'] == true,
             ));
           }
+          _hasStarted = false;
           break;
         case 'failed':
           iosNativePipActive = false;
@@ -183,10 +202,24 @@ class _IosPipClient implements PipClient {
 
 // Only Android uses package:pip; iOS uses a real native AVPlayer/AVKit bridge.
 class PipManager {
-  PipManager({PipClient? client}) : _client = client ?? (!kIsWeb && Platform.isIOS ? _IosPipClient() : _RealPipClient()) {
+  PipManager({PipClient? client}) : _client = client ?? (!kIsWeb && Platform.isIOS ? IosPipClient() : _RealPipClient()) {
     _client.registerStateChangedObserver(_onStateChanged);
-    if (_client is _IosPipClient) {
-      (_client as _IosPipClient).onRestore = _restoreController.add;
+    if (_client is IosPipClient) {
+      (_client as IosPipClient).onRestore = _restoreController.add;
+      (_client as IosPipClient).restoreUI = () async => await restoreUI?.call() ?? false;
+    }
+  }
+
+  Future<bool> Function()? restoreUI;
+
+  Future<void> stopForNewPlayback() async {
+    final client = _client;
+    if (client is! IosPipClient) return;
+    client.suppressRestore = true;
+    try {
+      await client.stop();
+    } finally {
+      client.suppressRestore = false;
     }
   }
 
@@ -226,11 +259,34 @@ class PipManager {
 
   Future<bool> enter({String? mediaUrl, Duration position = Duration.zero}) async {
     if (!await _ensureSupported()) return false;
-    if (_client is _IosPipClient) {
+    if (_client is IosPipClient) {
       if (mediaUrl == null || mediaUrl.isEmpty) return false;
-      return (_client as _IosPipClient).startWithMedia(mediaUrl, position);
+      return (_client as IosPipClient).startWithMedia(mediaUrl, position);
     }
     return _client.start();
+  }
+
+  /// Reserve the shared iOS audio session before pausing MPV. Only one
+  /// transfer may run, including the period before AVKit reports "started".
+  Future<bool> enterIOSPlayback({
+    required String mediaUrl,
+    required Duration position,
+    required Future<void> Function() pause,
+    required Future<void> Function() resume,
+  }) async {
+    if (iosNativePipActive || _client is! IosPipClient) return false;
+    iosNativePipActive = true;
+    bool started = false;
+    try {
+      await pause();
+      started = await enter(mediaUrl: mediaUrl, position: position);
+      return started;
+    } finally {
+      if (!started) {
+        iosNativePipActive = false;
+        await resume();
+      }
+    }
   }
 
   Future<void> dispose() async {

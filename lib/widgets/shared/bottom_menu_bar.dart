@@ -1,3 +1,5 @@
+import 'package:fladder/providers/pip_provider.dart';
+import 'package:fladder/wrappers/pip_manager.dart';
 import 'package:flutter/material.dart';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -35,7 +37,8 @@ class BottomMenuBar extends ConsumerWidget {
 
     final bottomViewPadding = MediaQuery.of(context).viewPadding.bottom;
 
-    final showPlayerBar = playerState == VideoPlayerState.minimized;
+    final nativePip = iosNativePipActive && (ref.watch(pipStateProvider).asData?.value ?? false);
+    final showPlayerBar = playerState == VideoPlayerState.minimized && !nativePip;
 
     final calculatedBottomViewPadding =
         showPlayerBar ? floatingPlayerHeight(context) + bottomViewPadding : bottomViewPadding;

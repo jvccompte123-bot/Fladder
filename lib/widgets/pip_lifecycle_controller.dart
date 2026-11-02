@@ -24,6 +24,8 @@ class PipLifecycleController extends ConsumerStatefulWidget {
 class _PipLifecycleControllerState extends ConsumerState<PipLifecycleController> with WidgetsBindingObserver {
   StreamSubscription<IosPipRestoreEvent>? _iosRestoreSubscription;
   IosPipRestoreEvent? _pendingIOSRestore;
+  String? _iosMediaUrl;
+  StreamSubscription<bool>? _iosStateSubscription;
   Future<void> _configurationQueue = Future<void>.value();
 
   bool get _onIOS => !kIsWeb && Platform.isIOS;
@@ -36,6 +38,18 @@ class _PipLifecycleControllerState extends ConsumerState<PipLifecycleController>
       WidgetsBinding.instance.addObserver(this);
       // Native AVPlayer owns the PiP frames on iOS. Do not configure the
       // generic PiP plugin, which would show black frames even without video.
+      final manager = ref.read(pipManagerProvider);
+      manager.restoreUI = () async {
+        if (!mounted || ref.read(playBackModel)?.media?.url != _iosMediaUrl) return false;
+        if (ref.read(mediaPlaybackProvider).state != VideoPlayerState.fullScreen) {
+          unawaited(ref.read(videoPlayerProvider).openPlayer(context));
+          await WidgetsBinding.instance.endOfFrame;
+        }
+        return mounted;
+      };
+      _iosStateSubscription = manager.isInPip.listen((active) {
+        if (active) _iosMediaUrl = ref.read(playBackModel)?.media?.url;
+      });
       _iosRestoreSubscription = ref.read(pipManagerProvider).iosRestoreEvents.listen(_restoreIOSPlayback);
     } else if (_onAndroid) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _applyCurrent());
@@ -59,6 +73,7 @@ class _PipLifecycleControllerState extends ConsumerState<PipLifecycleController>
     final restored = _pendingIOSRestore;
     if (restored == null) return;
     _pendingIOSRestore = null;
+    if (_iosMediaUrl == null || ref.read(playBackModel)?.media?.url != _iosMediaUrl) return;
     // Keep the MPV player paused if the PiP user paused/closed playback.
     final player = ref.read(videoPlayerProvider);
     await player.seek(restored.position);
@@ -98,6 +113,8 @@ class _PipLifecycleControllerState extends ConsumerState<PipLifecycleController>
   @override
   void dispose() {
     _iosRestoreSubscription?.cancel();
+    _iosStateSubscription?.cancel();
+    if (_onIOS) ref.read(pipManagerProvider).restoreUI = null;
     if (_onIOS) WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }

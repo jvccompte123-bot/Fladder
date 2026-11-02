@@ -1,3 +1,5 @@
+import 'package:fladder/providers/pip_provider.dart';
+import 'package:fladder/wrappers/pip_manager.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 
@@ -80,7 +82,8 @@ class _NavigationScaffoldState extends ConsumerState<NavigationScaffold> {
     final views = ref.watch(viewsProvider.select((value) => value.views));
     final playerState = ref.watch(mediaPlaybackProvider.select((value) => value.state));
     final currentItem = ref.watch(playBackModel.select((value) => value?.item));
-    final showPlayerBar = playerState == VideoPlayerState.minimized;
+    final nativePip = iosNativePipActive && (ref.watch(pipStateProvider).asData?.value ?? false);
+    final showPlayerBar = playerState == VideoPlayerState.minimized && !nativePip;
     final showAudioFullScreen = playerState == VideoPlayerState.fullScreen && currentItem is AudioModel;
     final showAudioSidePanel = showAudioFullScreen && AdaptiveLayout.layoutModeOf(context) == LayoutMode.dual;
     final showAudioOverlay = showAudioFullScreen && !showAudioSidePanel;

@@ -446,16 +446,19 @@ class _DesktopControlsState extends ConsumerState<DesktopControls> {
                                  if (url != null && url.isNotEmpty &&
                                      model?.isAudioPlayback == false &&
                                      playback.playing) {
-                                   await player.pause();
-                                   // Let the MPV fade and the audio session settle
-                                   // before AVPlayer starts its background session.
-                                   await Future<void>.delayed(const Duration(milliseconds: 225));
                                    try {
-                                     ok = await manager.enter(mediaUrl: url, position: playback.position);
+                                     ok = await manager.enterIOSPlayback(
+                                       mediaUrl: url,
+                                       position: playback.position,
+                                       pause: player.pause,
+                                       resume: () async {
+                                         if (identical(ref.read(playBackModel), model)) await player.play();
+                                       },
+                                     );
                                    } catch (_) {
                                      ok = false;
                                    }
-                                   if (!ok) await player.play();
+                                   if (ok && context.mounted) minimizePlayer(context);
                                  }
                                } else {
                                  ok = await manager.enter();
@@ -914,6 +917,10 @@ class _DesktopControlsState extends ConsumerState<DesktopControls> {
   void resetTimer() => timer.reset();
 
   Future<void> closePlayer() async {
+    if (iosNativePipActive) {
+      minimizePlayer(context);
+      return;
+    }
     clearOverlaySettings();
     ref.read(videoPlayerProvider).stop();
     await WidgetsBinding.instance.endOfFrame;

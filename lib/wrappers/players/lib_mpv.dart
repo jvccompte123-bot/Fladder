@@ -450,6 +450,14 @@ class LibMPV extends BasePlayer {
   Future<void> pause() async {
     _musicPaused = true;
     setState(lastState.update(playing: false));
+    if (iosNativePipActive) {
+      // Complete the actual pause before AVPlayer starts. A timer-based fade
+      // can still be running when the native method channel returns.
+      _fadeTimer?.cancel();
+      _fadeTimer = null;
+      await _player?.pause();
+      return;
+    }
     // The native iOS PiP player shares this process-wide audio session.
     // Wait for MPV's deactivation before AVPlayer tries to activate it,
     // otherwise the async deactivation may turn off PiP audio afterward.

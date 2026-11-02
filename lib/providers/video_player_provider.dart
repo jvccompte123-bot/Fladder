@@ -12,6 +12,8 @@ import 'package:fladder/models/playback/playback_model.dart';
 import 'package:fladder/models/playback/playback_queue_state.dart';
 import 'package:fladder/models/settings/video_player_settings.dart';
 import 'package:fladder/providers/low_resource_provider.dart';
+import 'package:fladder/providers/pip_provider.dart';
+import 'package:fladder/wrappers/pip_manager.dart';
 import 'package:fladder/providers/settings/client_settings_provider.dart';
 import 'package:fladder/providers/settings/video_player_settings_provider.dart';
 import 'package:fladder/wrappers/media_control_wrapper.dart';
@@ -134,6 +136,7 @@ class VideoPlayerNotifier extends StateNotifier<MediaControlsWrapper> {
   }
 
   Future<bool> loadPlaybackItem(PlaybackModel model, Duration startPosition) async {
+    if (iosNativePipActive) await ref.read(pipManagerProvider).stopForNewPlayback();
     ref.read(playBackModel)?.dispose();
     await state.stop(keepMediaSession: true);
     ref.read(playbackRateProvider.notifier).state = 1.0;
@@ -183,6 +186,7 @@ class VideoPlayerNotifier extends StateNotifier<MediaControlsWrapper> {
     int currentIndex,
     Duration startPosition,
   ) async {
+    if (iosNativePipActive) await ref.read(pipManagerProvider).stopForNewPlayback();
     final currentPlayerState = ref.read(mediaPlaybackProvider).state;
     final keepFullScreenLayout = currentPlayerState == VideoPlayerState.fullScreen;
     final playbackSettings = ref.read(mediaPlaybackProvider);
