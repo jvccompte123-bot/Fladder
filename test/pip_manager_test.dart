@@ -1,4 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:fladder/providers/pip_provider.dart';
 
 import 'package:fladder/wrappers/pip_manager.dart';
 
@@ -150,6 +152,30 @@ void main() {
 
       expect(emitted, [true, false]);
       await sub.cancel();
+      await manager.dispose();
+    });
+
+    test('a page subscribing after PiP starts sees active playback immediately', () async {
+      final fake = _FakePipClient();
+      final manager = PipManager(client: fake);
+      fake.emitState(true);
+      final container = ProviderContainer(overrides: [pipManagerProvider.overrideWithValue(manager)]);
+      expect(await container.read(pipStateProvider.future), isTrue);
+      fake.emitState(false);
+      await Future<void>.delayed(Duration.zero);
+      expect(container.read(pipStateProvider).asData?.value, isFalse);
+      container.dispose();
+      await manager.dispose();
+    });
+
+    test('a page reopened after PiP stops does not show a stale active state', () async {
+      final fake = _FakePipClient();
+      final manager = PipManager(client: fake);
+      fake.emitState(true);
+      fake.emitState(false);
+      final container = ProviderContainer(overrides: [pipManagerProvider.overrideWithValue(manager)]);
+      expect(await container.read(pipStateProvider.future), isFalse);
+      container.dispose();
       await manager.dispose();
     });
 

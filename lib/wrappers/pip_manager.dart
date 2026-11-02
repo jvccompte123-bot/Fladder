@@ -233,6 +233,9 @@ class PipManager {
   bool _supportCached = false;
   bool _supportChecked = false;
 
+  bool _currentState = false;
+  bool get currentState => _currentState;
+
   Stream<bool> get isInPip => _stateController.stream;
 
   // Always sets up aspect so manual enter() works; autoEnter gates the
@@ -307,6 +310,7 @@ class PipManager {
   }
 
   void _onStateChanged(bool isInPip) {
+    _currentState = isInPip;
     if (!_stateController.isClosed) {
       _stateController.add(isInPip);
     }
