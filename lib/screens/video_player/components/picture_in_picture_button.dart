@@ -96,14 +96,25 @@ class _PictureInPictureButtonState
         icon: const Icon(IconsaxPlusLinear.screenmirroring),
       );
     }
-    return TextButton.icon(
+    // Keep the same 48 px footprint as the other player controls in portrait.
+    return IconButton(
       key: const ValueKey('native_pip_button'),
+      tooltip: context.localized.pictureInPictureTitle,
+      iconSize: 32,
       onPressed: _starting ? null : _start,
-      icon: _starting
-          ? const SizedBox.square(
-              dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
-          : const Icon(Icons.picture_in_picture_alt),
-      label: const Text('PiP'),
+      icon: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _starting
+              ? const SizedBox.square(
+                  dimension: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : const Icon(Icons.picture_in_picture_alt, size: 20),
+          const Text('PiP',
+              textScaler: TextScaler.noScaling,
+              style: TextStyle(fontSize: 10, height: 1)),
+        ],
+      ),
     );
   }
 }
