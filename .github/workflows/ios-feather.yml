@@ -15,7 +15,9 @@ permissions:
 jobs:
   build-ios:
     name: Construire l'IPA iOS non signe
-    runs-on: macos-latest
+    # Pin the standard Intel pool: macos-latest currently selects the
+    # capacity-constrained arm64 pool. Xcode still builds an arm64 iPhone app.
+    runs-on: macos-26-intel
     timeout-minutes: 60
 
     steps:
