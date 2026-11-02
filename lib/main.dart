@@ -108,7 +108,7 @@ class _FladderApp extends ConsumerWidget {
           },
           builder: (context, child) => MediaQueryScaler(
             child: LocalizationContextWrapper(
-              child: PipLifecycleController(child: child ?? Container()),
+              child: PipLifecycleController(navigatorKey: autoRouter.navigatorKey, child: child ?? Container()),
               currentLocale: language,
             ),
             enable: ref.read(argumentsStateProvider).leanBackMode,

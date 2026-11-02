@@ -13,9 +13,10 @@ import 'package:fladder/providers/video_player_provider.dart';
 import 'package:fladder/wrappers/pip_manager.dart';
 
 class PipLifecycleController extends ConsumerStatefulWidget {
-  const PipLifecycleController({super.key, required this.child});
+  const PipLifecycleController({super.key, required this.child, required this.navigatorKey});
 
   final Widget child;
+  final GlobalKey<NavigatorState> navigatorKey;
 
   @override
   ConsumerState<PipLifecycleController> createState() => _PipLifecycleControllerState();
@@ -25,6 +26,7 @@ class _PipLifecycleControllerState extends ConsumerState<PipLifecycleController>
   StreamSubscription<IosPipRestoreEvent>? _iosRestoreSubscription;
   IosPipRestoreEvent? _pendingIOSRestore;
   String? _iosMediaUrl;
+  PipManager? _iosManager;
   StreamSubscription<bool>? _iosStateSubscription;
   Future<void> _configurationQueue = Future<void>.value();
 
@@ -38,14 +40,16 @@ class _PipLifecycleControllerState extends ConsumerState<PipLifecycleController>
       WidgetsBinding.instance.addObserver(this);
       // Native AVPlayer owns the PiP frames on iOS. Do not configure the
       // generic PiP plugin, which would show black frames even without video.
-      final manager = ref.read(pipManagerProvider);
+      final manager = _iosManager = ref.read(pipManagerProvider);
       manager.restoreUI = () async {
         if (!mounted || ref.read(playBackModel)?.media?.url != _iosMediaUrl) return false;
         if (ref.read(mediaPlaybackProvider).state != VideoPlayerState.fullScreen) {
-          unawaited(ref.read(videoPlayerProvider).openPlayer(context));
+          final playerContext = widget.navigatorKey.currentState?.overlay?.context;
+          if (playerContext == null) return false;
+          unawaited(ref.read(videoPlayerProvider).openPlayer(playerContext));
           await WidgetsBinding.instance.endOfFrame;
         }
-        return mounted;
+        return mounted && ref.read(mediaPlaybackProvider).state == VideoPlayerState.fullScreen;
       };
       _iosStateSubscription = manager.isInPip.listen((active) {
         if (active) _iosMediaUrl = ref.read(playBackModel)?.media?.url;
@@ -114,7 +118,7 @@ class _PipLifecycleControllerState extends ConsumerState<PipLifecycleController>
   void dispose() {
     _iosRestoreSubscription?.cancel();
     _iosStateSubscription?.cancel();
-    if (_onIOS) ref.read(pipManagerProvider).restoreUI = null;
+    _iosManager?.restoreUI = null;
     if (_onIOS) WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
