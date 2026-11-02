@@ -40,7 +40,8 @@ class _PipLifecycleControllerState extends ConsumerState<PipLifecycleController>
       WidgetsBinding.instance.addObserver(this);
       // Native AVPlayer owns the PiP frames on iOS. Do not configure the
       // generic PiP plugin, which would show black frames even without video.
-      final manager = _iosManager = ref.read(pipManagerProvider);
+      final manager = ref.read(pipManagerProvider);
+      _iosManager = manager;
       manager.restoreUI = () async {
         if (!mounted || ref.read(playBackModel)?.media?.url != _iosMediaUrl) return false;
         if (ref.read(mediaPlaybackProvider).state != VideoPlayerState.fullScreen) {
