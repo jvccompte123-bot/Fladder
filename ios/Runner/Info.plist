@@ -51,9 +51,15 @@
 		<!-- Allow AVPlayer to load video from a local Jellyfin NAS via HTTP. -->
 		<key>NSAppTransportSecurity</key>
 		<dict>
+			<!-- Media URLs are supplied by the user’s Jellyfin server, including HTTP NAS addresses. -->
+			<key>NSAllowsArbitraryLoadsForMedia</key>
+			<true/>
 			<key>NSAllowsLocalNetworking</key>
 			<true/>
 		</dict>
+
+		<key>NSLocalNetworkUsageDescription</key>
+		<string>Fladder connects to your Jellyfin server to browse and play your media, including Picture-in-Picture.</string>
 
 		<key>UIBackgroundModes</key>
 		<array>

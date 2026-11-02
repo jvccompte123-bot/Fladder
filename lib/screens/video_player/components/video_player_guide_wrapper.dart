@@ -1,8 +1,11 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:fladder/models/items/channel_model.dart';
+import 'package:fladder/models/media_playback_model.dart';
+import 'package:fladder/screens/video_player/components/picture_in_picture_button.dart';
 import 'package:fladder/models/items/channel_program.dart';
 import 'package:fladder/models/playback/playback_model.dart';
 import 'package:fladder/models/playback/tv_playback_model.dart';
@@ -15,7 +18,7 @@ import 'package:fladder/util/fladder_image.dart';
 import 'package:fladder/util/focus_provider.dart';
 import 'package:fladder/util/localization_helper.dart';
 
-class VideoPlayerGuideWrapper extends StatefulWidget {
+class VideoPlayerGuideWrapper extends ConsumerStatefulWidget {
   final Widget child;
   const VideoPlayerGuideWrapper({
     required this.child,
@@ -23,16 +26,21 @@ class VideoPlayerGuideWrapper extends StatefulWidget {
   });
 
   @override
-  State<VideoPlayerGuideWrapper> createState() => _VideoPlayerGuideWrapperState();
+  ConsumerState<VideoPlayerGuideWrapper> createState() => _VideoPlayerGuideWrapperState();
 }
 
-class _VideoPlayerGuideWrapperState extends State<VideoPlayerGuideWrapper> {
+class _VideoPlayerGuideWrapperState extends ConsumerState<VideoPlayerGuideWrapper> {
   bool guideVisible = false;
   final Duration animDuration = const Duration(milliseconds: 300);
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedContainer(
+    final onIOS = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+    final model = ref.watch(playBackModel);
+    final stream = model?.playbackInfo?.mediaSources?.firstOrNull?.mediaStreams
+        ?.where((s) => s.width != null && s.height != null && s.width! > 0 && s.height! > 0).firstOrNull;
+    final aspect = stream == null ? 16 / 9 : stream.width! / stream.height!;
+    return LayoutBuilder(builder: (context, constraints) => AnimatedContainer(
       duration: animDuration,
       color: guideVisible ? Theme.of(context).colorScheme.surface : Colors.transparent,
       child: Stack(
@@ -57,17 +65,28 @@ class _VideoPlayerGuideWrapperState extends State<VideoPlayerGuideWrapper> {
                 guideVisible = false;
               });
             },
-            child: Container(
+            child: AnimatedContainer(
               color: Colors.black,
-              child: AnimatedFractionallySizedBox(
-                duration: animDuration,
-                widthFactor: guideVisible ? 0.5 : 1.0,
-                heightFactor: guideVisible ? 0.5 : 1.0,
-                alignment: Alignment.topLeft,
-                child: widget.child,
-              ),
+              duration: animDuration,
+              width: guideVisible ? constraints.maxWidth * 0.5 : constraints.maxWidth,
+              height: guideVisible
+                  ? (onIOS
+                      ? (constraints.maxWidth * 0.5 / aspect).clamp(1.0, constraints.maxHeight * 0.5)
+                      : constraints.maxHeight * 0.5)
+                  : constraints.maxHeight,
+              child: widget.child,
             ),
           ),
+          if (guideVisible && onIOS)
+            Positioned(
+              left: 8,
+              top: MediaQuery.paddingOf(context).top + 8,
+              child: PictureInPictureButton(onStarted: () {
+                ref.read(mediaPlaybackProvider.notifier).update(
+                    (state) => state.copyWith(state: VideoPlayerState.minimized));
+                Navigator.of(context).pop();
+              }),
+            ),
           if (!guideVisible)
             Visibility.maintain(
               visible: !guideVisible,
@@ -87,7 +106,7 @@ class _VideoPlayerGuideWrapperState extends State<VideoPlayerGuideWrapper> {
             ),
         ],
       ),
-    );
+    ));
   }
 }
 

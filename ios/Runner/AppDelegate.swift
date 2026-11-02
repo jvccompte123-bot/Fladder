@@ -12,9 +12,18 @@ import workmanager_apple
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
-    if let controller = window?.rootViewController as? FlutterViewController {
-      iosPipBridge = FladderIosPip(messenger: controller.binaryMessenger,
-                                   sourceView: controller.view)
+    // Register with the engine, even when UIKit has not attached its window yet.
+    // Resolving the source view once at launch could leave this channel absent.
+    if let registrar = registrar(forPlugin: "FladderIosPip") {
+      iosPipBridge = FladderIosPip(messenger: registrar.messenger()) { [weak self] in
+        if let view = self?.window?.rootViewController?.view, view.window != nil {
+          return view
+        }
+        return UIApplication.shared.connectedScenes
+          .compactMap { $0 as? UIWindowScene }
+          .flatMap { $0.windows }
+          .first { $0.isKeyWindow }?.rootViewController?.view
+      }
     }
     UNUserNotificationCenter.current().delegate = self
 
@@ -55,6 +64,7 @@ import workmanager_apple
 @available(iOS 15.0, *)
 final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
   private let channel: FlutterMethodChannel
+  private let sourceViewProvider: () -> UIView?
   private weak var sourceView: UIView?
   private var player: AVPlayer?
   private var playerLayer: AVPlayerLayer?
@@ -65,13 +75,16 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
   private var possibleObservation: NSKeyValueObservation?
   private var layerObservation: NSKeyValueObservation?
   private var seekCompleted = false
+  private var seekRequested = false
+  private var isLive = false
+  private var initialPositionMs: Int64 = 0
   private var timeout: DispatchWorkItem?
   private var pendingStart: FlutterResult?
   private var didRequestStart = false
   private var sessionStarted = false
 
-  init(messenger: FlutterBinaryMessenger, sourceView: UIView) {
-    self.sourceView = sourceView
+  init(messenger: FlutterBinaryMessenger, sourceViewProvider: @escaping () -> UIView?) {
+    self.sourceViewProvider = sourceViewProvider
     channel = FlutterMethodChannel(name: "fladder/ios_pip", binaryMessenger: messenger)
     super.init()
     backgroundObserver = NotificationCenter.default.addObserver(
@@ -148,19 +161,22 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
           let rawUrl = arguments["url"] as? String,
           let url = URL(string: rawUrl),
           ["https", "http", "file"].contains(url.scheme?.lowercased() ?? ""),
-          let view = sourceView, view.window != nil,
+          let view = sourceViewProvider(), view.window != nil,
           AVPictureInPictureController.isPictureInPictureSupported() else {
-      result(false)
+      result(FlutterError(code: "ios_pip_unavailable", message: "No active video window or PiP session available.", details: nil))
       return
     }
 
     cleanup()
+    sourceView = view
+    isLive = (arguments["isLive"] as? Bool) == true
+    initialPositionMs = max(0, (arguments["positionMs"] as? NSNumber)?.int64Value ?? 0)
 
     // This must happen before AVPictureInPictureController is created.
     // In particular, the Flutter/MPV pause command may have deactivated
     // the shared iOS audio session just before we received this request.
     guard activatePlaybackAudio() else {
-      result(false)
+      result(FlutterError(code: "ios_audio_session", message: "Audio session could not be activated.", details: nil))
       return
     }
 
@@ -180,7 +196,7 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
 
     guard let pip = AVPictureInPictureController(playerLayer: layer) else {
       layer.removeFromSuperlayer()
-      result(false)
+      result(FlutterError(code: "ios_pip_controller", message: "AVKit could not create a PiP controller.", details: nil))
       return
     }
 
@@ -195,34 +211,31 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
 
     statusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] current, _ in
       DispatchQueue.main.async {
-        guard let self = self, self.pendingStart != nil else { return }
+        guard let self = self, self.player?.currentItem === current else { return }
         if current.status == .failed {
-          self.failStart()
+          self.failStart(self.failureCode("ios_media", current.error))
         } else if current.status == .readyToPlay {
           self.updateVideoGeometry(for: current)
-          self.tryStart()
+          self.preparePlayback(current)
         }
       }
     }
     presentationSizeObservation = item.observe(\.presentationSize, options: [.initial, .new]) { [weak self] current, _ in
-      DispatchQueue.main.async { self?.updateVideoGeometry(for: current) }
-    }
-    possibleObservation = pip.observe(\.isPictureInPicturePossible, options: [.initial, .new]) { [weak self] _, _ in
-      DispatchQueue.main.async { self?.tryStart() }
-    }
-
-    layerObservation = layer.observe(\.isReadyForDisplay, options: [.initial, .new]) { [weak self] _, _ in
-      DispatchQueue.main.async { self?.tryStart() }
-    }
-
-    let positionMs = max(0, (arguments["positionMs"] as? NSNumber)?.int64Value ?? 0)
-    let time = CMTime(value: positionMs, timescale: 1000)
-    videoPlayer.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
       DispatchQueue.main.async {
-        guard let self = self, self.pendingStart != nil else { return }
-        guard finished else { self.failStart(); return }
-        self.seekCompleted = true
-        self.player?.play()
+        guard let self = self, self.player?.currentItem === current else { return }
+        self.updateVideoGeometry(for: current)
+      }
+    }
+    possibleObservation = pip.observe(\.isPictureInPicturePossible, options: [.initial, .new]) { [weak self] current, _ in
+      DispatchQueue.main.async {
+        guard let self = self, self.pictureController === current else { return }
+        self.tryStart()
+      }
+    }
+
+    layerObservation = layer.observe(\.isReadyForDisplay, options: [.initial, .new]) { [weak self] current, _ in
+      DispatchQueue.main.async {
+        guard let self = self, self.playerLayer === current else { return }
         self.tryStart()
       }
     }
@@ -230,10 +243,40 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
     // Prevent an unsupported codec, unreachable NAS or a failed AVKit session
     // from leaving the normal MPV player paused forever.
     let work = DispatchWorkItem { [weak self] in
-      if self?.pendingStart != nil { self?.failStart() }
+      if self?.pendingStart != nil { self?.failStart("ios_pip_timeout") }
     }
     timeout = work
-    DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: work)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 30, execute: work)
+  }
+
+  private func preparePlayback(_ item: AVPlayerItem) {
+    guard pendingStart != nil, !seekRequested, let videoPlayer = player else { return }
+    seekRequested = true
+    // Live TV is not a movie timeline. Seeking to an EPG time (or zero) can
+    // fail or wait forever, preventing AVKit from receiving its first frame.
+    if isLive || initialPositionMs == 0 {
+      seekCompleted = true
+      videoPlayer.play()
+      tryStart()
+      return
+    }
+    let time = CMTime(value: initialPositionMs, timescale: 1000)
+    videoPlayer.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+      DispatchQueue.main.async {
+        guard let self = self, self.player === videoPlayer, self.pendingStart != nil else { return }
+        guard finished else { self.failStart("ios_seek_failed"); return }
+        self.seekCompleted = true
+        videoPlayer.play()
+        self.tryStart()
+      }
+    }
+  }
+
+  private func failureCode(_ stage: String, _ error: Error?) -> String {
+    guard let error = error as NSError? else { return stage }
+    // Domains and numeric codes are safe to share; localizedDescription and
+    // userInfo can contain the server URL and authentication query string.
+    return "\(stage)_\(error.domain)_\(error.code)"
   }
 
   private func tryStart() {
@@ -244,19 +287,19 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
     // The MPV player pauses its shared audio session on transfer.
     // Make sure native AVPlayer owns an active session before requesting PiP.
     guard activatePlaybackAudio() else {
-      failStart()
+      failStart("ios_audio_session")
       return
     }
     didRequestStart = true
     pictureController?.startPictureInPicture()
   }
 
-  private func failStart() {
+  private func failStart(_ code: String = "ios_pip_cancelled") {
     guard let result = pendingStart else { return }
     pendingStart = nil
-    result(false)
-    emit("failed")
     cleanup()
+    emit("failed")
+    result(FlutterError(code: code, message: "Native PiP could not start.", details: nil))
   }
 
   private func stop() {
@@ -274,6 +317,7 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
     timeout = nil
     layerObservation = nil
     seekCompleted = false
+    seekRequested = false
     possibleObservation = nil
     statusObservation = nil
     presentationSizeObservation = nil
@@ -295,6 +339,7 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
   }
 
   func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
+    guard controller === pictureController else { return }
     sessionStarted = true
     _ = activatePlaybackAudio()
     timeout?.cancel()
@@ -312,12 +357,14 @@ final class FladderIosPip: NSObject, AVPictureInPictureControllerDelegate {
     _ controller: AVPictureInPictureController,
     failedToStartPictureInPictureWithError error: Error
   ) {
+    guard controller === pictureController else { return }
     let failure = error as NSError
     NSLog("Fladder PiP: start failed domain=%@ code=%ld", failure.domain, failure.code)
-    failStart()
+    failStart(failureCode("ios_avkit", error))
   }
 
   func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
+    guard controller === pictureController else { return }
     let seconds = player?.currentTime().seconds ?? 0
     let safeSeconds = seconds.isFinite ? max(0, seconds) : 0
     let positionMs = Int64(safeSeconds * 1000)

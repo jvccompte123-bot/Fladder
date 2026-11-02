@@ -11,6 +11,8 @@ import 'package:iconsax_plus/iconsax_plus.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 
 import 'package:fladder/models/item_base_model.dart';
+import 'package:fladder/screens/video_player/components/picture_in_picture_button.dart';
+import 'package:fladder/wrappers/pip_manager.dart';
 import 'package:fladder/models/items/media_segments_model.dart';
 import 'package:fladder/models/media_playback_model.dart';
 import 'package:fladder/models/playback/playback_model.dart';
@@ -263,7 +265,10 @@ class _TvPlayerControlsState extends ConsumerState<TvPlayerControls> {
                           onPressed: () => showVideoPlayerOptions(context, () => minimizePlayer(context)),
                           icon: const Icon(IconsaxPlusLinear.more),
                         ),
+                        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS)
+                          PictureInPictureButton(onStarted: () => minimizePlayer(context)),
                         IconButton(
+                          tooltip: Localizations.localeOf(context).languageCode == 'fr' ? 'Guide TV' : 'TV guide',
                           onPressed: () => widget.showGuide(true),
                           icon: const Icon(IconsaxPlusBold.slider_vertical),
                         ),
@@ -636,6 +641,10 @@ class _TvPlayerControlsState extends ConsumerState<TvPlayerControls> {
   void resetTimer() => timer.reset();
 
   Future<void> closePlayer() async {
+    if (iosNativePipActive) {
+      minimizePlayer(context);
+      return;
+    }
     clearOverlaySettings();
     ref.read(videoPlayerProvider).stop();
     await WidgetsBinding.instance.endOfFrame;

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:fladder/models/media_playback_model.dart';
+import 'package:fladder/models/playback/tv_playback_model.dart';
 import 'package:fladder/providers/pip_provider.dart';
 import 'package:fladder/providers/settings/video_player_settings_provider.dart';
 import 'package:fladder/providers/video_player_provider.dart';
@@ -81,8 +82,9 @@ class _PipLifecycleControllerState extends ConsumerState<PipLifecycleController>
     if (_iosMediaUrl == null || ref.read(playBackModel)?.media?.url != _iosMediaUrl) return;
     // Keep the MPV player paused if the PiP user paused/closed playback.
     final player = ref.read(videoPlayerProvider);
-    await player.seek(restored.position);
-    if (mounted && restored.wasPlaying) {
+    // Live TV has no VOD timeline to restore; a seek may stop a live stream.
+    if (ref.read(playBackModel) is! TvPlaybackModel) await player.seek(restored.position);
+    if (mounted && restored.wasPlaying && ref.read(playBackModel)?.media?.url == _iosMediaUrl) {
       await player.play();
     }
   }

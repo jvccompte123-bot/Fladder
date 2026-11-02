@@ -133,13 +133,14 @@ class IosPipClient implements PipClient {
   @override
   Future<bool> start() async => false;
 
-  Future<bool> startWithMedia(String url, Duration position) async {
+  Future<bool> startWithMedia(String url, Duration position, {bool isLive = false}) async {
     if (_starting || _hasStarted) return false;
     _starting = true;
     try {
       return await _channel.invokeMethod<bool>('start', {
         'url': url,
         'positionMs': position.inMilliseconds,
+        'isLive': isLive,
       }) ?? false;
     } finally {
       _starting = false;
@@ -257,11 +258,11 @@ class PipManager {
     await _client.stop();
   }
 
-  Future<bool> enter({String? mediaUrl, Duration position = Duration.zero}) async {
+  Future<bool> enter({String? mediaUrl, Duration position = Duration.zero, bool isLive = false}) async {
     if (!await _ensureSupported()) return false;
     if (_client is IosPipClient) {
       if (mediaUrl == null || mediaUrl.isEmpty) return false;
-      return (_client as IosPipClient).startWithMedia(mediaUrl, position);
+      return (_client as IosPipClient).startWithMedia(mediaUrl, position, isLive: isLive);
     }
     return _client.start();
   }
@@ -271,6 +272,7 @@ class PipManager {
   Future<bool> enterIOSPlayback({
     required String mediaUrl,
     required Duration position,
+    bool isLive = false,
     required Future<void> Function() pause,
     required Future<void> Function() resume,
   }) async {
@@ -279,7 +281,7 @@ class PipManager {
     bool started = false;
     try {
       await pause();
-      started = await enter(mediaUrl: mediaUrl, position: position);
+      started = await enter(mediaUrl: mediaUrl, position: position, isLive: isLive);
       return started;
     } finally {
       if (!started) {
@@ -294,6 +296,8 @@ class PipManager {
     await _stateController.close();
     await _restoreController.close();
   }
+
+  Future<bool> isSupported() => _ensureSupported();
 
   Future<bool> _ensureSupported() async {
     if (_supportChecked) return _supportCached;

@@ -1,50 +1,49 @@
-# PiP iPhone : correction candidate, à valider sur appareil
+# PiP iPhone — parcours HLS-2, validation sur appareil requise
 
-Base : `1054fb56ed862dd4c77a51dfabf14f22480a9da8` (branche expérimentale).
-Branche de travail : `fix/ios-pip-persistent-session`. Ne pas fusionner dans develop avant les essais iPhone.
+Appareil signalé : iPhone 17 Pro, iOS 27.0.1.
+Branche : `fix/ios-pip-persistent-session`. Ne pas fusionner dans `develop` avant validation sur iPhone.
 
-## Constats vérifiés dans les sources
+## Problèmes identifiés
 
-- `LibMPV.pause()` lançait un fondu asynchrone après avoir rendu la main. Attendre 225 ms ne garantissait pas la pause réelle.
-- `closePlayer()` appelait `stop()`, qui signalait la fin de lecture à Jellyfin et effaçait le modèle utilisé pour restaurer la lecture. Une navigation ne doit pas terminer la session PiP.
-- Le démarrage AVKit pouvait précéder la fin du seek et la disponibilité de la première image.
-- La restauration native répondait `true` sans demander à Flutter de rouvrir le lecteur.
-- La restauration Dart ne vérifiait pas si l'utilisateur avait changé de vidéo.
-- Le verrouillage au retour de l'application considérait uniquement MPV, mis en pause pendant le PiP.
+La capture d'écran montre le guide TV intégré : `VideoPlayerGuideWrapper` réduisait la vidéo à la moitié de la largeur ET de la hauteur de l'écran. Cette surface gardait donc le ratio portrait du téléphone, avec de grandes marges noires. Le bouton ouvrant ce guide n'appelait aucun code PiP. `TvPlayerControls` ne proposait aucun bouton PiP natif. Quitter ce lecteur appelait normalement l'arrêt de la chaîne.
 
-Ces défauts sont démontrables. Ils ne prouvent pas à eux seuls la cause de tous les arrêts observés en arrière-plan. Il manque les événements AVKit et un essai sur l'iPhone concerné.
+Pour les films, le pont natif reprenait l'URL MPV sans vérifier sa compatibilité AVPlayer. Le profil MPV accepte des conteneurs/codecs qu'Apple ne sait pas forcément lire. Le diagnostic de tous les échecs était réduit à un booléen. La cause exacte de l'échec du film testé ne peut pas être prouvée sans les événements natifs de cet appareil.
 
-## Changements
+## Nouvelle implémentation
 
-Le transfert réserve l'audio avant de demander une pause MPV réelle, sans fondu ni délai fixe. Un échec rend la lecture à MPV. Les doubles demandes sont refusées. AVPlayer demande explicitement la poursuite en arrière-plan et attend le seek et la première image avant de démarrer le PiP. La temporisation de 15 secondes reste uniquement une limite d'échec réseau/décodage.
+- Un bouton **PiP** explicite appelle le même parcours dans les films, la TV et le guide TV sur iOS. Le bouton du guide reste distinct et porte l'infobulle « Guide TV ».
+- La réduction du guide iOS utilise les dimensions vidéo disponibles, avec 16:9 comme repli. Elle ne se présente pas comme du PiP.
+- Pour les vidéos Jellyfin, le PiP négocie une session HLS H.264/AAC auprès du serveur. La lecture MPV habituelle garde son profil et son URL. Jellyfin peut remuxer les codecs compatibles ou transcoder les autres ; il doit autoriser ces opérations et disposer des ressources nécessaires.
+- La version du média et les indices audio/sous-titres sélectionnés sont transmis. Les sous-titres sélectionnés sont incrustés par Jellyfin, puisque l'overlay Flutter/libass n'est pas accessible à AVKit. Le débit est limité au réglage de connexion, avec un plafond de 20 Mbit/s pour ce parcours.
+- Pour les films, le manifeste conserve la timeline complète : AVPlayer effectue le seek après `readyToPlay`. Pour la TV en direct, aucun seek n'est demandé, notamment pas vers l'heure du programme EPG.
+- Le canal natif est enregistré auprès du moteur Flutter, indépendamment de la présence d'une fenêtre au lancement. La vue source est retrouvée au moment du démarrage.
+- La session audio est réservée avant la pause MPV réelle. Le départ PiP attend la première image et `isPictureInPicturePossible`. La limite de 30 secondes est un délai d'échec réseau/préparation, pas une temporisation pour tenter de faire fonctionner AVKit.
+- Après `didStartPictureInPicture`, Fladder minimise le lecteur. Revenir en arrière dans le lecteur TV pendant le PiP ne termine plus la session. Une autre vidéo arrête explicitement le PiP précédent.
+- La fin ou l'échec du PiP libère uniquement son encodage Jellyfin, identifié par son `PlaySessionId`. Un handle de tuner partagé avec MPV n'est pas fermé. La restauration TV ne tente pas de seek sur le flux live.
+- Le mode audio en arrière-plan reste activé. L'accès local est expliqué par `NSLocalNetworkUsageDescription`, et les médias HTTP des serveurs configurés sont autorisés via l'exception ATS dédiée aux médias. La vérification des certificats TLS reste active.
+- Un échec affiche un code copiable (version **HLS-2**), sans URL ni jeton. Par exemple `jellyfin_hls_unavailable`, `ios_bridge_missing`, `ios_media_AVFoundationErrorDomain_…` ou `ios_pip_timeout`.
 
-Après confirmation AVKit, le lecteur Flutter est minimisé. Ses commandes de mini-lecteur sont masquées pendant le PiP natif. Le bouton de restauration iOS demande réellement la réouverture du lecteur. Une nouvelle vidéo arrête d'abord l'ancien PiP sans restaurer son ancienne position. Le mode automatique reste désactivé sur iOS.
+Aucune nouvelle dépendance n'est ajoutée. Le PiP automatique reste désactivé sur iOS.
 
-La surface conserve le ratio `presentationSize`, y compris en portrait. Aucun recadrage des pixels encodés n'est effectué. iOS contrôle les dimensions finales de sa fenêtre PiP. `resizeAspect` ne retire pas les bandes noires déjà encodées.
+## Limites
 
-## Limites et architecture
+Le ratio natif est celui d'`AVPlayerItem.presentationSize` et AVKit contrôle la taille finale de sa fenêtre. Des bandes noires déjà présentes dans les pixels du média restent dans l'image ; cette correction ne recadre pas automatiquement le contenu. Le guide et le PiP sont deux interfaces différentes.
 
-AVPlayer peut alimenter AVKit directement ; MPV fournit une texture Flutter qui ne devient pas automatiquement une source PiP. Une solution AVSampleBufferDisplayLayer nécessiterait un véritable pipeline de décodage, timestamps, audio et commandes de lecture. Aucun nouveau composant ni changement de licence n'est introduit ici.
+Les fichiers hors ligne passent directement à AVPlayer et restent limités aux formats Apple. Le NAS et l'iPhone ne sont pas accessibles depuis l'environnement de développement. Des tests Dart et une compilation iOS ne valident donc ni le transcodage de ce NAS, ni la persistance PiP sur iOS 27.0.1.
 
-Cette correction conserve l'URL existante. La compatibilité de MPV ne garantit pas celle d'AVPlayer : MKV, certains codecs, sous-titres externes et sélection des pistes nécessitent encore des essais et éventuellement un profil HLS/transcodage Jellyfin dédié. La sélection MPV des pistes et les sous-titres Flutter ne sont pas transférés au lecteur Apple. Aucun transcodage nouveau n'est implémenté dans cette correction.
+Sources techniques : le profil utilise l'API PlaybackInfo et les types du client Jellyfin du dépôt. La timeline VOD HLS est également vérifiée dans `Jellyfin.Api/Controllers/DynamicHlsController.cs` du projet Jellyfin. L'accès direct à la documentation Apple est bloqué par le proxy de l'environnement ; ne pas prétendre à une vérification en direct de ses pages.
 
-Le mode `audio` est déjà déclaré dans Info.plist. `NSAllowsLocalNetworking` ne garantit pas l'accès à toute adresse HTTP ou tout certificat TLS. Un échec d'accès/format doit rendre la main à MPV. Le code ne journalise pas les URLs ni les jetons du NAS.
+## Installation et tests
 
-Référence officielle à consulter : https://developer.apple.com/documentation/avkit/adopting-picture-in-picture-in-a-standard-player . L'accès à developer.apple.com a été refusé par le proxy lors de cette intervention ; cette documentation n'a donc pas pu être vérifiée en direct.
+1. Ouvrir l'exécution GitHub Actions correspondant au dernier commit HLS-2 de cette branche. Attendre la réussite de la compilation.
+2. Télécharger **Artifacts → Fladder-Feather-iOS**, extraire le ZIP dans Fichiers.
+3. Importer l'IPA dans Feather, utiliser le certificat habituel et installer par-dessus Fladder, en conservant l'identifiant de l'application. Ne pas désinstaller l'application existante.
+4. Lancer un film et appuyer sur le nouveau bouton portant le texte **PiP**. Si une erreur apparaît, copier son code complet.
+5. Après apparition de la vraie fenêtre iOS, naviguer dans la bibliothèque puis revenir à l'accueil iOS pendant au moins 60 secondes. Vérifier image et son.
+6. Reprendre/mettre en pause avec les commandes PiP, restaurer le lecteur puis fermer le PiP ; vérifier la position et l'absence de double audio.
+7. Refaire le test avec TF1 : utiliser **PiP** dans les commandes de lecture ou dans le guide. Le bouton « Guide TV » seul n'ouvre pas le PiP.
+8. Lancer une autre chaîne/vidéo pendant le PiP et vérifier que l'ancien lecteur s'arrête sans appliquer sa position au nouveau.
+9. Revenir à l'accueil iOS sans aucune vidéo : aucun PiP ne doit apparaître.
+10. Vérifier un vrai 4:3, un vrai 2.39:1 et un 16:9 avec bandes encodées, en distinguant les marges de l'interface et les pixels du film.
 
-## Installation et essais
-
-Dans GitHub, ouvrir Actions → « iOS - IPA pour Feather » et choisir une exécution de `fix/ios-pip-persistent-session`. Attendre la réussite des tests ET de la compilation. Dans Artifacts, télécharger `Fladder-Feather-iOS`. Extraire le ZIP dans Fichiers, importer `Fladder-Feather-unsigned.ipa` dans Feather et signer avec votre certificat habituel. Installer par-dessus Fladder avec le même identifiant d'application. Ne pas désinstaller la version existante.
-
-1. Sans vidéo : revenir à l'accueil iOS. Aucun PiP ne doit apparaître.
-2. Lire un MP4 H.264/AAC connu : demander PiP. Vérifier une seule piste sonore et une image animée.
-3. Naviguer dans la bibliothèque pendant 60 secondes : la fenêtre et le son doivent continuer.
-4. Revenir à l'accueil iOS puis ouvrir une autre application pendant 60 secondes.
-5. Mettre en pause/reprendre depuis la fenêtre PiP.
-6. Restaurer avec le bouton iOS : vérifier que le lecteur se rouvre au bon moment, sans double audio.
-7. Fermer le PiP, revenir à Fladder, vérifier la position et l'état pause/lecture.
-8. Lancer une autre vidéo pendant le PiP : aucune ancienne position ne doit être appliquée à la nouvelle vidéo.
-9. Essayer un fichier 4:3, un vrai 2.39:1, une vidéo portrait puis un 16:9 avec bandes encodées. Les bandes encodées sont attendues.
-10. Essayer vos fichiers habituels, pistes audio et sous-titres. En cas d'échec du démarrage, la lecture normale doit reprendre.
-
-Pour chaque échec, préciser le modèle d'iPhone, la version iOS, l'étape, le format du fichier et si le son continue. Une compilation réussie n'est pas une validation du PiP sur appareil.
+En cas d'échec, indiquer le code HLS-2, TV ou film, si l'image démarre, si le son continue et quelle action fait disparaître la fenêtre.

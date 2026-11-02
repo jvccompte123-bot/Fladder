@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -21,6 +20,7 @@ import 'package:fladder/models/media_playback_model.dart';
 import 'package:fladder/models/playback/playback_model.dart';
 import 'package:fladder/models/settings/video_player_settings.dart';
 import 'package:fladder/providers/pip_provider.dart';
+import 'package:fladder/screens/video_player/components/picture_in_picture_button.dart';
 import 'package:fladder/providers/settings/client_settings_provider.dart';
 import 'package:fladder/providers/settings/video_player_settings_provider.dart';
 import 'package:fladder/providers/user_provider.dart';
@@ -428,49 +428,7 @@ class _DesktopControlsState extends ConsumerState<DesktopControls> {
                         IconButton(
                             onPressed: () => showVideoPlayerOptions(context, () => minimizePlayer(context)),
                             icon: const Icon(IconsaxPlusLinear.more)),
-                        if (pipPlatformSupported && ((!kIsWeb && Platform.isIOS) || MediaQuery.orientationOf(context) == Orientation.landscape))
-                          IconButton(
-                            tooltip: context.localized.pictureInPictureTitle,
-                            onPressed: () async {
-                               final manager = ref.read(pipManagerProvider);
-                               final isIOS = !kIsWeb && Platform.isIOS;
-                               final playback = ref.read(mediaPlaybackProvider);
-                               final model = ref.read(playBackModel);
-                               final player = ref.read(videoPlayerProvider);
-                               bool ok = false;
-                               if (isIOS) {
-                                 // The iOS native AVPlayer must own the PiP video.
-                                 // Pause MPV first to avoid two audio streams;
-                                 // restore it if native PiP cannot begin.
-                                 final url = model?.media?.url;
-                                 if (url != null && url.isNotEmpty &&
-                                     model?.isAudioPlayback == false &&
-                                     playback.playing) {
-                                   try {
-                                     ok = await manager.enterIOSPlayback(
-                                       mediaUrl: url,
-                                       position: playback.position,
-                                       pause: player.pause,
-                                       resume: () async {
-                                         if (identical(ref.read(playBackModel), model)) await player.play();
-                                       },
-                                     );
-                                   } catch (_) {
-                                     ok = false;
-                                   }
-                                   if (ok && context.mounted) minimizePlayer(context);
-                                 }
-                               } else {
-                                 ok = await manager.enter();
-                               }
-                               if (!ok && context.mounted) {
-                                 ScaffoldMessenger.of(context).showSnackBar(
-                                   SnackBar(content: Text(context.localized.pictureInPictureNotSupported)),
-                                 );
-                               }
-                             },
-                            icon: const Icon(IconsaxPlusLinear.screenmirroring),
-                          ),
+                        PictureInPictureButton(onStarted: () => minimizePlayer(context)),
                         if (AdaptiveLayout.layoutOf(context) == ViewSize.tablet) ...[
                           IconButton(
                             onPressed: () => showSubSelection(context),

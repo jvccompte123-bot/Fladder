@@ -7,7 +7,8 @@ import 'package:fladder/wrappers/pip_manager.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('fladder/ios_pip');
-  final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  final messenger =
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   late PipManager manager;
   late List<String> calls;
   bool startSucceeds = true;
@@ -17,7 +18,9 @@ void main() {
     messenger.handlePlatformMessage(
       channel.name,
       const StandardMethodCodec().encodeMethodCall(MethodCall('state', {
-        'status': status, 'positionMs': position, 'playing': true,
+        'status': status,
+        'positionMs': position,
+        'playing': true,
       })),
       (_) => completed.complete(),
     );
@@ -44,34 +47,102 @@ void main() {
     messenger.setMockMethodCallHandler(channel, null);
   });
 
-  test('reserves audio before pause and waits for pause before starting AVKit', () async {
+  test('reserves audio before pause and waits for pause before starting AVKit',
+      () async {
     final paused = Completer<void>();
     final started = manager.enterIOSPlayback(
-      mediaUrl: 'https://example.invalid/video.mp4', position: const Duration(seconds: 12),
-      pause: () { expect(iosNativePipActive, isTrue); return paused.future; },
+      mediaUrl: 'https://example.invalid/video.mp4',
+      position: const Duration(seconds: 12),
+      pause: () {
+        expect(iosNativePipActive, isTrue);
+        return paused.future;
+      },
       resume: () async => fail('must not resume MPV while PiP owns playback'),
     );
     expect(calls, isEmpty);
-    expect(await manager.enterIOSPlayback(
-      mediaUrl: 'https://example.invalid/video.mp4', position: Duration.zero,
-      pause: () async => fail('duplicate transfer'), resume: () async => fail('duplicate resume'),
-    ), isFalse);
+    expect(
+        await manager.enterIOSPlayback(
+          mediaUrl: 'https://example.invalid/video.mp4',
+          position: Duration.zero,
+          pause: () async => fail('duplicate transfer'),
+          resume: () async => fail('duplicate resume'),
+        ),
+        isFalse);
     paused.complete();
     expect(await started, isTrue);
     expect(iosNativePipActive, isTrue);
   });
 
+  test('live TV reaches native PiP without seeking to the EPG position',
+      () async {
+    Map<dynamic, dynamic>? arguments;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'isSupported') return true;
+      if (call.method == 'start') {
+        arguments = call.arguments as Map;
+        await event('started');
+        return true;
+      }
+      return null;
+    });
+    expect(
+        await manager.enterIOSPlayback(
+          mediaUrl: 'https://example.invalid/live.m3u8',
+          position: Duration.zero,
+          isLive: true,
+          pause: () async {},
+          resume: () async {},
+        ),
+        isTrue);
+    expect(arguments!['isLive'], isTrue);
+    expect(arguments!['positionMs'], 0);
+  });
+
+  test('an AVFoundation error releases audio and resumes normal playback',
+      () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'isSupported') return true;
+      if (call.method == 'start') {
+        throw PlatformException(
+            code: 'ios_media_AVFoundationErrorDomain_-11828');
+      }
+      return null;
+    });
+    var resumed = 0;
+    await expectLater(
+        manager.enterIOSPlayback(
+          mediaUrl: 'https://example.invalid/movie.m3u8',
+          position: Duration.zero,
+          pause: () async {},
+          resume: () async {
+            resumed++;
+          },
+        ),
+        throwsA(isA<PlatformException>()));
+    expect(resumed, 1);
+    expect(iosNativePipActive, isFalse);
+  });
+
   test('failed native start releases audio and resumes MPV once', () async {
     startSucceeds = false;
     var resumed = 0;
-    expect(await manager.enterIOSPlayback(
-      mediaUrl: 'https://example.invalid/video.mp4', position: Duration.zero,
-      pause: () async {}, resume: () async { expect(iosNativePipActive, isFalse); resumed++; },
-    ), isFalse);
+    expect(
+        await manager.enterIOSPlayback(
+          mediaUrl: 'https://example.invalid/video.mp4',
+          position: Duration.zero,
+          pause: () async {},
+          resume: () async {
+            expect(iosNativePipActive, isFalse);
+            resumed++;
+          },
+        ),
+        isFalse);
     expect(resumed, 1);
   });
 
-  test('native close restores position once; replacement waits and suppresses restore', () async {
+  test(
+      'native close restores position once; replacement waits and suppresses restore',
+      () async {
     final restored = <IosPipRestoreEvent>[];
     final subscription = manager.iosRestoreEvents.listen(restored.add);
     await event('started');
