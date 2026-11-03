@@ -267,11 +267,12 @@ class _TvPlayerControlsState extends ConsumerState<TvPlayerControls> {
                         ),
                         if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS)
                           PictureInPictureButton(onStarted: () => minimizePlayer(context)),
-                        IconButton(
-                          tooltip: Localizations.localeOf(context).languageCode == 'fr' ? 'Guide TV' : 'TV guide',
-                          onPressed: () => widget.showGuide(true),
-                          icon: const Icon(IconsaxPlusBold.slider_vertical),
-                        ),
+                        if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS)
+                          IconButton(
+                            tooltip: Localizations.localeOf(context).languageCode == 'fr' ? 'Guide TV' : 'TV guide',
+                            onPressed: () => widget.showGuide(true),
+                            icon: const Icon(IconsaxPlusBold.slider_vertical),
+                          ),
                       ],
                     ),
                   ),

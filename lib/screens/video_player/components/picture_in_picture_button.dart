@@ -102,19 +102,11 @@ class _PictureInPictureButtonState
       tooltip: context.localized.pictureInPictureTitle,
       iconSize: 32,
       onPressed: _starting ? null : _start,
-      icon: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _starting
-              ? const SizedBox.square(
-                  dimension: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2))
-              : const Icon(Icons.picture_in_picture_alt, size: 20),
-          const Text('PiP',
-              textScaler: TextScaler.noScaling,
-              style: TextStyle(fontSize: 10, height: 1)),
-        ],
-      ),
+      icon: _starting
+          ? const SizedBox.square(
+              dimension: 20,
+              child: CircularProgressIndicator(strokeWidth: 2))
+          : const Icon(Icons.picture_in_picture_alt, size: 20),
     );
   }
 }

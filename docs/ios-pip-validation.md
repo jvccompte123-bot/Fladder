@@ -1,7 +1,9 @@
-# PiP iPhone — parcours HLS-2, validation sur appareil requise
+# PiP iPhone — parcours HLS-2
 
 Appareil signalé : iPhone 17 Pro, iOS 27.0.1.
 Branche : `fix/ios-pip-persistent-session`. Ne pas fusionner dans `develop` avant validation sur iPhone.
+
+L'utilisateur confirme que le PiP fonctionne correctement sur son iPhone. Le dernier ajustement concerne uniquement l'interface : suppression du texte sous l'icône et du bouton de réduction dans le guide près de Play sur iOS.
 
 ## Problèmes identifiés
 
@@ -11,7 +13,7 @@ Pour les films, le pont natif reprenait l'URL MPV sans vérifier sa compatibilit
 
 ## Nouvelle implémentation
 
-- Un bouton **PiP** explicite appelle le même parcours dans les films, la TV et le guide TV sur iOS. Le bouton du guide reste distinct et porte l'infobulle « Guide TV ».
+- Une icône **Picture-in-Picture**, sans texte dessous, appelle le même parcours dans les films, la TV et le guide TV sur iOS. Son infobulle reste disponible. L'ancien bouton de réduction dans le guide est retiré des commandes iOS ; il reste disponible sur les autres plateformes.
 - La réduction du guide iOS utilise les dimensions vidéo disponibles, avec 16:9 comme repli. Elle ne se présente pas comme du PiP.
 - Pour les vidéos Jellyfin, le PiP négocie une session HLS H.264/AAC auprès du serveur. La lecture MPV habituelle garde son profil et son URL. Jellyfin peut remuxer les codecs compatibles ou transcoder les autres ; il doit autoriser ces opérations et disposer des ressources nécessaires.
 - La version du média et les indices audio/sous-titres sélectionnés sont transmis. Les sous-titres sélectionnés sont incrustés par Jellyfin, puisque l'overlay Flutter/libass n'est pas accessible à AVKit. Le débit est limité au réglage de connexion, avec un plafond de 20 Mbit/s pour ce parcours.
@@ -38,10 +40,10 @@ Sources techniques : le profil utilise l'API PlaybackInfo et les types du client
 1. Ouvrir l'exécution GitHub Actions correspondant au dernier commit HLS-2 de cette branche. Attendre la réussite de la compilation.
 2. Télécharger **Artifacts → Fladder-Feather-iOS**, extraire le ZIP dans Fichiers.
 3. Importer l'IPA dans Feather, utiliser le certificat habituel et installer par-dessus Fladder, en conservant l'identifiant de l'application. Ne pas désinstaller l'application existante.
-4. Lancer un film et appuyer sur le nouveau bouton portant le texte **PiP**. Si une erreur apparaît, copier son code complet.
+4. Lancer un film et appuyer sur l'icône **Picture-in-Picture** (rectangle avec un petit rectangle à l'intérieur). Si une erreur apparaît, copier son code complet.
 5. Après apparition de la vraie fenêtre iOS, naviguer dans la bibliothèque puis revenir à l'accueil iOS pendant au moins 60 secondes. Vérifier image et son.
 6. Reprendre/mettre en pause avec les commandes PiP, restaurer le lecteur puis fermer le PiP ; vérifier la position et l'absence de double audio.
-7. Refaire le test avec TF1 : utiliser **PiP** dans les commandes de lecture ou dans le guide. Le bouton « Guide TV » seul n'ouvre pas le PiP.
+7. Refaire le test avec TF1 : utiliser l'icône **Picture-in-Picture** dans les commandes de lecture. Vérifier qu'elle n'a plus de texte dessous et que l'ancien bouton de réduction dans le guide près de Play n'apparaît plus.
 8. Lancer une autre chaîne/vidéo pendant le PiP et vérifier que l'ancien lecteur s'arrête sans appliquer sa position au nouveau.
 9. Revenir à l'accueil iOS sans aucune vidéo : aucun PiP ne doit apparaître.
 10. Vérifier un vrai 4:3, un vrai 2.39:1 et un 16:9 avec bandes encodées, en distinguant les marges de l'interface et les pixels du film.
