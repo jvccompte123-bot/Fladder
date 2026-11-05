@@ -2902,5 +2902,8 @@
   "deepLinkItemNotFound": "This item isn't available for any of your accounts",
   "lowResourceModeTitle": "Low resource mode",
   "lowResourceModeDesc": "Uses less memory on devices with limited RAM by lowering caches and buffers and turning off heavy visual effects. Automatic enables it on devices with 3 GB of RAM or less.",
-  "lowResourceModeAuto": "Automatic"
+  "lowResourceModeAuto": "Automatic",
+  "playerScreenLock": "Lock screen and controls",
+  "playerScreenUnlockHint": "Touch and hold the lock to unlock",
+  "playerScreenLockFailed": "Could not change the screen lock. Please try again."
 }

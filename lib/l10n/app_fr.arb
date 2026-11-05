@@ -2135,5 +2135,8 @@
         }
     },
     "leanBackModeTitle": "Mode Lean-back",
-    "leanBackModeInfo": "Le mode Lean-back est réactivé par défaut sur les appareils AndroidTV. Activer cette option sur les appareils non-AndroidTV peut entraîner un comportement inattendu."
+    "leanBackModeInfo": "Le mode Lean-back est réactivé par défaut sur les appareils AndroidTV. Activer cette option sur les appareils non-AndroidTV peut entraîner un comportement inattendu.",
+    "playerScreenLock": "Verrouiller l’écran et les commandes",
+    "playerScreenUnlockHint": "Maintenez le cadenas pour déverrouiller",
+    "playerScreenLockFailed": "Impossible de modifier le verrouillage. Réessayez."
 }

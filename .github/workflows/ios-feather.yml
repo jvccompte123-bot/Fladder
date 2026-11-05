@@ -44,8 +44,8 @@ jobs:
       - name: Installer les dependances Flutter
         run: flutter pub get
 
-      - name: Verifier les transitions PiP
-        run: flutter test --no-pub test/pip_manager_test.dart test/ios_pip_handoff_test.dart test/ios_pip_source_test.dart
+      - name: Verifier le PiP et les commandes du lecteur
+        run: flutter test --no-pub test/pip_manager_test.dart test/ios_pip_handoff_test.dart test/ios_pip_source_test.dart test/player_screen_lock_test.dart test/player_controls_layout_test.dart
 
       - name: Compiler l'application iPhone sans signature
         run: flutter build ios --release --no-codesign --flavor production --build-number=${{ github.run_number }}

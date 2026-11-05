@@ -12,6 +12,27 @@ import workmanager_apple
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
+    if let registrar = registrar(forPlugin: "FladderPlayerOrientation") {
+      let channel = FlutterMethodChannel(name: "fladder/player_orientation", binaryMessenger: registrar.messenger())
+      channel.setMethodCallHandler { [weak self] call, result in
+        guard call.method == "currentOrientation" else {
+          result(FlutterMethodNotImplemented)
+          return
+        }
+        let scene = self?.window?.windowScene ?? UIApplication.shared.connectedScenes
+          .compactMap { $0 as? UIWindowScene }
+          .first { $0.activationState == .foregroundActive && $0.windows.contains { $0.isKeyWindow } }
+        // UIKit's displayed orientation remains reliable when the phone is flat.
+        // Use the same orientation names as Flutter's SystemChrome mapping.
+        switch scene?.interfaceOrientation {
+        case .portrait: result("DeviceOrientation.portraitUp")
+        case .portraitUpsideDown: result("DeviceOrientation.portraitDown")
+        case .landscapeLeft: result("DeviceOrientation.landscapeLeft")
+        case .landscapeRight: result("DeviceOrientation.landscapeRight")
+        default: result(FlutterError(code: "orientation_unavailable", message: "No active player window", details: nil))
+        }
+      }
+    }
     // Register with the engine, even when UIKit has not attached its window yet.
     // Resolving the source view once at launch could leave this channel absent.
     if let registrar = registrar(forPlugin: "FladderIosPip") {

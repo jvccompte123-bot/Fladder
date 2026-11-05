@@ -21,6 +21,8 @@ import 'package:fladder/models/playback/playback_model.dart';
 import 'package:fladder/models/settings/video_player_settings.dart';
 import 'package:fladder/providers/pip_provider.dart';
 import 'package:fladder/screens/video_player/components/picture_in_picture_button.dart';
+import 'package:fladder/screens/video_player/components/player_controls_layout.dart';
+import 'package:fladder/screens/video_player/components/player_screen_lock.dart';
 import 'package:fladder/providers/settings/client_settings_provider.dart';
 import 'package:fladder/providers/settings/video_player_settings_provider.dart';
 import 'package:fladder/providers/user_provider.dart';
@@ -102,12 +104,14 @@ class _DesktopControlsState extends ConsumerState<DesktopControls> {
 
   @override
   void dispose() {
+    timer.cancel();
     _deactivateSpeedBoost();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final screenLocked = PlayerScreenLockScope.maybeOf(context)?.locked ?? false;
     final isInPip = ref.watch(pipStateProvider).asData?.value ?? false;
     final player = ref.watch(videoPlayerProvider);
     if (isInPip) {
@@ -120,7 +124,8 @@ class _DesktopControlsState extends ConsumerState<DesktopControls> {
       );
     }
     final mediaSegments = ref.watch(playBackModel.select((value) => value?.mediaSegments));
-    final subtitleWidget = player.subtitleWidget(showOverlay && !widget.nextUpVisible, controlsKey: _bottomControlsKey);
+    final subtitleWidget =
+        player.subtitleWidget(showOverlay && !widget.nextUpVisible && !screenLocked, controlsKey: _bottomControlsKey);
     final isDesktop = AdaptiveLayout.of(context).isDesktop || kIsWeb;
     final speedBoostEnabled = ref.watch(videoPlayerSettingsProvider.select((value) => value.enableSpeedBoost));
 
@@ -143,7 +148,7 @@ class _DesktopControlsState extends ConsumerState<DesktopControls> {
           child: PopScope(
             canPop: false,
             onPopInvokedWithResult: (didPop, result) {
-              if (!didPop) {
+              if (!didPop && !screenLocked) {
                 closePlayer();
               }
             },
@@ -156,10 +161,10 @@ class _DesktopControlsState extends ConsumerState<DesktopControls> {
                 children: [
                   Positioned.fill(
                     child: IgnorePointer(
-                      ignoring: widget.nextUpVisible,
+                      ignoring: widget.nextUpVisible || screenLocked,
                       child: AnimatedOpacity(
-                        duration: const Duration(milliseconds: 250),
-                        opacity: widget.nextUpVisible ? 0 : 1,
+                        duration: screenLocked ? Duration.zero : const Duration(milliseconds: 250),
+                        opacity: widget.nextUpVisible || screenLocked ? 0 : 1,
                         child: Stack(
                           children: [
                             Positioned.fill(
@@ -368,6 +373,7 @@ class _DesktopControlsState extends ConsumerState<DesktopControls> {
                           ],
                         ),
                       ),
+                    const PlayerScreenLockButton(),
                     if (initInputDevice == InputDevice.touch)
                       Align(
                         alignment: Alignment.centerRight,
@@ -418,62 +424,57 @@ class _DesktopControlsState extends ConsumerState<DesktopControls> {
                 ),
               ),
               const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Flexible(
-                    flex: 2,
-                    child: Row(
-                      children: <Widget>[
-                        IconButton(
-                            onPressed: () => showVideoPlayerOptions(context, () => minimizePlayer(context)),
-                            icon: const Icon(IconsaxPlusLinear.more)),
-                        PictureInPictureButton(onStarted: () => minimizePlayer(context)),
-                        if (AdaptiveLayout.layoutOf(context) == ViewSize.tablet) ...[
-                          IconButton(
-                            onPressed: () => showSubSelection(context),
-                            icon: const Icon(IconsaxPlusLinear.subtitle),
-                          ),
-                          IconButton(
-                            onPressed: () => showAudioSelection(context),
-                            icon: const Icon(IconsaxPlusLinear.audio_square),
-                          ),
-                        ],
-                        if (AdaptiveLayout.layoutOf(context) >= ViewSize.desktop) ...[
-                          Flexible(
-                            child: ElevatedButton.icon(
-                              onPressed: () => showSubSelection(context),
-                              icon: const Icon(IconsaxPlusLinear.subtitle),
-                              label: Text(
-                                ref.watch(playBackModel.select((value) {
-                                      final language = value?.mediaStreams?.currentSubStream?.language;
-                                      return language?.isEmpty == true ? context.localized.off : language;
-                                    }))?.capitalize() ??
-                                    "",
-                                maxLines: 1,
-                              ),
-                            ),
-                          ),
-                          Flexible(
-                            child: ElevatedButton.icon(
-                              onPressed: () => showAudioSelection(context),
-                              icon: const Icon(IconsaxPlusLinear.audio_square),
-                              label: Text(
-                                ref.watch(playBackModel.select((value) {
-                                      final language = value?.mediaStreams?.currentAudioStream?.language;
-                                      return language?.isEmpty == true ? context.localized.off : language;
-                                    }))?.capitalize() ??
-                                    "",
-                                maxLines: 1,
-                              ),
-                            ),
-                          )
-                        ],
-                      ].addInBetween(const SizedBox(
-                        width: 4,
-                      )),
+              PlayerControlsLayout(
+                spacing: isPhone ? 2 : 6,
+                leading: [
+                  IconButton(
+                      onPressed: () => showVideoPlayerOptions(context, () => minimizePlayer(context)),
+                      icon: const Icon(IconsaxPlusLinear.more)),
+                  PictureInPictureButton(onStarted: () => minimizePlayer(context)),
+                  if (AdaptiveLayout.layoutOf(context) == ViewSize.tablet) ...[
+                    IconButton(
+                      onPressed: () => showSubSelection(context),
+                      icon: const Icon(IconsaxPlusLinear.subtitle),
                     ),
-                  ),
+                    IconButton(
+                      onPressed: () => showAudioSelection(context),
+                      icon: const Icon(IconsaxPlusLinear.audio_square),
+                    ),
+                  ],
+                  if (AdaptiveLayout.layoutOf(context) >= ViewSize.desktop) ...[
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 160),
+                      child: ElevatedButton.icon(
+                        onPressed: () => showSubSelection(context),
+                        icon: const Icon(IconsaxPlusLinear.subtitle),
+                        label: Text(
+                          ref.watch(playBackModel.select((value) {
+                                final language = value?.mediaStreams?.currentSubStream?.language;
+                                return language?.isEmpty == true ? context.localized.off : language;
+                              }))?.capitalize() ??
+                              "",
+                          maxLines: 1,
+                        ),
+                      ),
+                    ),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 160),
+                      child: ElevatedButton.icon(
+                        onPressed: () => showAudioSelection(context),
+                        icon: const Icon(IconsaxPlusLinear.audio_square),
+                        label: Text(
+                          ref.watch(playBackModel.select((value) {
+                                final language = value?.mediaStreams?.currentAudioStream?.language;
+                                return language?.isEmpty == true ? context.localized.off : language;
+                              }))?.capitalize() ??
+                              "",
+                          maxLines: 1,
+                        ),
+                      ),
+                    )
+                  ],
+                ],
+                playback: [
                   previousButton,
                   previousChapterButton(ref),
                   seekBackwardButton(ref),
@@ -489,42 +490,35 @@ class _DesktopControlsState extends ConsumerState<DesktopControls> {
                   seekForwardButton(ref),
                   nextChapterButton(ref),
                   nextVideoButton,
-                  Flexible(
-                    flex: 2,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        if (initInputDevice == InputDevice.pointer || AdaptiveLayout.of(context).isDesktop)
-                          Tooltip(
-                            message: context.localized.stop,
-                            child: IconButton(
-                              onPressed: () => closePlayer(),
-                              icon: const Icon(IconsaxPlusLinear.close_square),
-                            ),
-                          ),
-                        const Spacer(),
-                        if (AdaptiveLayout.viewSizeOf(context) >= ViewSize.tablet &&
-                            ref.read(videoPlayerProvider).hasPlayer) ...{
-                          if (bitRateOptions?.isNotEmpty == true)
-                            Tooltip(
-                              message: context.localized.qualityOptionsTitle,
-                              child: IconButton(
-                                onPressed: () => openQualityOptions(context),
-                                icon: const Icon(IconsaxPlusLinear.speedometer),
-                              ),
-                            ),
-                        },
-                        if ((initInputDevice == InputDevice.pointer || AdaptiveLayout.of(context).isDesktop) &&
-                            AdaptiveLayout.viewSizeOf(context) > ViewSize.phone) ...[
-                          VideoVolumeSlider(
-                            onChanged: () => resetTimer(),
-                          ),
-                          const FullScreenButton(),
-                        ]
-                      ].addInBetween(const SizedBox(width: 8)),
+                ],
+                trailing: [
+                  if (initInputDevice == InputDevice.pointer || AdaptiveLayout.of(context).isDesktop)
+                    Tooltip(
+                      message: context.localized.stop,
+                      child: IconButton(
+                        onPressed: () => closePlayer(),
+                        icon: const Icon(IconsaxPlusLinear.close_square),
+                      ),
                     ),
-                  ),
-                ].addInBetween(SizedBox(width: isPhone ? 2 : 6)),
+                  if (AdaptiveLayout.viewSizeOf(context) >= ViewSize.tablet &&
+                      ref.read(videoPlayerProvider).hasPlayer) ...{
+                    if (bitRateOptions?.isNotEmpty == true)
+                      Tooltip(
+                        message: context.localized.qualityOptionsTitle,
+                        child: IconButton(
+                          onPressed: () => openQualityOptions(context),
+                          icon: const Icon(IconsaxPlusLinear.speedometer),
+                        ),
+                      ),
+                  },
+                  if ((initInputDevice == InputDevice.pointer || AdaptiveLayout.of(context).isDesktop) &&
+                      AdaptiveLayout.viewSizeOf(context) > ViewSize.phone) ...[
+                    VideoVolumeSlider(
+                      onChanged: () => resetTimer(),
+                    ),
+                    const FullScreenButton(),
+                  ]
+                ],
               ),
             ],
           ),

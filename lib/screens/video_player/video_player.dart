@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -12,6 +11,7 @@ import 'package:fladder/models/playback/tv_playback_model.dart';
 import 'package:fladder/providers/settings/video_player_settings_provider.dart';
 import 'package:fladder/providers/video_player_provider.dart';
 import 'package:fladder/screens/video_player/components/video_player_guide_wrapper.dart';
+import 'package:fladder/screens/video_player/components/player_screen_lock.dart';
 import 'package:fladder/screens/video_player/components/video_player_next_wrapper.dart';
 import 'package:fladder/screens/video_player/video_player_controls.dart';
 import 'package:fladder/util/adaptive_layout/adaptive_layout.dart';
@@ -47,7 +47,6 @@ class _VideoPlayerState extends ConsumerState<VideoPlayer> with WidgetsBindingOb
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     super.dispose();
   }
 
@@ -57,9 +56,6 @@ class _VideoPlayerState extends ConsumerState<VideoPlayer> with WidgetsBindingOb
     WidgetsBinding.instance.addObserver(this);
     Future.microtask(() {
       ref.read(mediaPlaybackProvider.notifier).update((state) => state.copyWith(state: VideoPlayerState.fullScreen));
-      final orientations = ref.read(videoPlayerSettingsProvider.select((value) => value.allowedOrientations));
-      SystemChrome.setPreferredOrientations(
-          orientations?.isNotEmpty == true ? orientations!.toList() : DeviceOrientation.values);
       return ref.read(videoPlayerSettingsProvider.notifier).setSavedBrightness();
     });
   }
@@ -86,15 +82,6 @@ class _VideoPlayerState extends ConsumerState<VideoPlayer> with WidgetsBindingOb
       },
     );
 
-    ref.listen(
-      videoPlayerSettingsProvider.select((value) => value.allowedOrientations),
-      (previous, next) {
-        if (previous != next) {
-          SystemChrome.setPreferredOrientations(next?.isNotEmpty == true ? next!.toList() : DeviceOrientation.values);
-        }
-      },
-    );
-
     final playerState = ref.watch(mediaPlaybackProvider.select((v) => v.state));
 
     final player = playerState == VideoPlayerState.disposed
@@ -116,41 +103,45 @@ class _VideoPlayerState extends ConsumerState<VideoPlayer> with WidgetsBindingOb
           data: ThemesData.of(context).dark,
           child: Container(
             color: Colors.black,
-            child: GestureDetector(
-              onScaleUpdate: (details) {
-                lastScale = details.scale;
-              },
-              onScaleEnd: (details) {
-                if (lastScale < 1.0) {
-                  ref.read(videoPlayerSettingsProvider.notifier).setFillScreen(false, context: context);
-                } else if (lastScale > 1.0) {
-                  ref.read(videoPlayerSettingsProvider.notifier).setFillScreen(true, context: context);
-                }
-                lastScale = 0.0;
-              },
-              child: Stack(children: [
-                if (!kIsWeb && ref.watch(videoPlayerSettingsProvider.select((value) => value.ambientBlur)))
-                  AmbientBlur(
-                    child: playerController.videoWidget(
-                          const Key("VideoPlayerBlur"),
-                          BoxFit.cover,
-                        ) ??
-                        const SizedBox.shrink(),
-                  ),
-                switch (currentPlaybackModel) {
-                  TvPlaybackModel _ => VideoPlayerGuideWrapper(
-                      key: const Key("VideoPlayerGuideWrapper"),
-                      child: player,
+            child: PlayerScreenLock(
+              allowedOrientations:
+                  ref.watch(videoPlayerSettingsProvider.select((value) => value.allowedOrientations))?.toList() ?? [],
+              child: GestureDetector(
+                onScaleUpdate: (details) {
+                  lastScale = details.scale;
+                },
+                onScaleEnd: (details) {
+                  if (lastScale < 1.0) {
+                    ref.read(videoPlayerSettingsProvider.notifier).setFillScreen(false, context: context);
+                  } else if (lastScale > 1.0) {
+                    ref.read(videoPlayerSettingsProvider.notifier).setFillScreen(true, context: context);
+                  }
+                  lastScale = 0.0;
+                },
+                child: Stack(children: [
+                  if (!kIsWeb && ref.watch(videoPlayerSettingsProvider.select((value) => value.ambientBlur)))
+                    AmbientBlur(
+                      child: playerController.videoWidget(
+                            const Key("VideoPlayerBlur"),
+                            BoxFit.cover,
+                          ) ??
+                          const SizedBox.shrink(),
                     ),
-                  _ => VideoPlayerNextWrapper(
-                      video: player,
-                      controlsBuilder: (nextUpVisible) => DesktopControls(nextUpVisible: nextUpVisible),
-                      overlays: [
-                        if (errorPlaying) const _VideoErrorWidget(),
-                      ],
-                    ),
-                }
-              ]),
+                  switch (currentPlaybackModel) {
+                    TvPlaybackModel _ => VideoPlayerGuideWrapper(
+                        key: const Key("VideoPlayerGuideWrapper"),
+                        child: player,
+                      ),
+                    _ => VideoPlayerNextWrapper(
+                        video: player,
+                        controlsBuilder: (nextUpVisible) => DesktopControls(nextUpVisible: nextUpVisible),
+                        overlays: [
+                          if (errorPlaying) const _VideoErrorWidget(),
+                        ],
+                      ),
+                  }
+                ]),
+              ),
             ),
           ),
         ),
